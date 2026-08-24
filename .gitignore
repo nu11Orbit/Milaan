@@ -20,9 +20,11 @@ ENV/
 .env.local
 .env.*.local
 
-# ── Sentence-transformers model cache ─────────────────────────────────────────
+# ── Sentence-transformers model cache (downloaded at runtime, not committed) ───
+# The model cache lives in ~/.cache/huggingface/ by default.
+# If you set HF_HOME or SENTENCE_TRANSFORMERS_HOME to a local dir, add it below.
 .cache/
-models/
+backend/sentence_model_cache/
 
 # ── Node / Next.js ────────────────────────────────────────────────────────────
 frontend/node_modules/
