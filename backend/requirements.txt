@@ -1,0 +1,40 @@
+# ── Web Framework ─────────────────────────────────────────────────────────────
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# ── MongoDB / ODM ──────────────────────────────────────────────────────────────
+motor==3.6.0
+beanie==1.27.0
+
+# ── Data validation ────────────────────────────────────────────────────────────
+pydantic==2.10.3
+pydantic-settings==2.6.1
+python-multipart==0.0.18        # CSV file upload support
+
+# ── Environment ────────────────────────────────────────────────────────────────
+python-dotenv==1.0.1
+
+# ── Synthetic data generation ─────────────────────────────────────────────────
+faker==33.0.0
+
+# ── Matching engine ───────────────────────────────────────────────────────────
+rapidfuzz==3.10.1
+sentence-transformers==3.3.1
+numpy==1.26.4
+
+# ── LLM providers ─────────────────────────────────────────────────────────────
+google-generativeai==0.8.3
+groq==0.13.0
+
+# ── SSE streaming ─────────────────────────────────────────────────────────────
+sse-starlette==2.1.3
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+httpx==0.27.2
+tenacity==9.0.0                 # retry / backoff for LLM router
+chardet==5.2.0                  # encoding detection for uploaded CSVs
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest==8.3.4
+pytest-asyncio==0.24.0
+httpx==0.27.2
