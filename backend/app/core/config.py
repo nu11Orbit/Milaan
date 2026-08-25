@@ -4,13 +4,19 @@ All application settings loaded from environment variables.
 Pydantic-settings v2 — add a field here, set it in .env, done.
 """
 
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+
+# Repo root is 3 levels up from this file:
+# backend/app/core/config.py → backend/app/core → backend/app → backend → repo root
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_ENV_FILE = _REPO_ROOT / ".env"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),   # absolute path — works regardless of CWD
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

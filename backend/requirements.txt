@@ -1,3 +1,9 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Tested on Python 3.11 and 3.12.
+# Python 3.14 is NOT yet supported by torch/numpy/rapidfuzz wheels.
+# Recommended: pyenv install 3.12.7 && pyenv local 3.12.7
+# ─────────────────────────────────────────────────────────────────────────────
+
 # ── Web Framework ─────────────────────────────────────────────────────────────
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
@@ -18,9 +24,13 @@ python-dotenv==1.0.1
 faker==33.0.0
 
 # ── Matching engine ───────────────────────────────────────────────────────────
-rapidfuzz==3.10.1
+# rapidfuzz: unpinned so pip picks a wheel compatible with your Python version
+rapidfuzz>=3.9.0
+# numpy: 2.x required for Python 3.13+; 1.x is fine for 3.11/3.12
+numpy>=1.26.4,<3.0
+# sentence-transformers pulls torch (~500MB first install, cached after).
+# On CPU-only machines this is fine — the all-MiniLM-L6-v2 model runs on CPU.
 sentence-transformers==3.3.1
-numpy==1.26.4
 
 # ── LLM providers ─────────────────────────────────────────────────────────────
 google-generativeai==0.8.3
@@ -37,4 +47,3 @@ chardet==5.2.0                  # encoding detection for uploaded CSVs
 # ── Testing ───────────────────────────────────────────────────────────────────
 pytest==8.3.4
 pytest-asyncio==0.24.0
-httpx==0.27.2
