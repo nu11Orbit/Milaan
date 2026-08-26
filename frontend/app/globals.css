@@ -1,0 +1,19 @@
+/* globals.css — extend Tailwind defaults */
+@import "tailwindcss";
+
+:root {
+  --brand-blue: #3b82f6;
+  --brand-green: #22c55e;
+  --brand-amber: #f59e0b;
+  --brand-red: #ef4444;
+}
+
+/* Smooth scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+/* Confidence band pills */
+.band-auto   { @apply bg-green-900/40 text-green-300 border border-green-700/50; }
+.band-review { @apply bg-amber-900/40 text-amber-300 border border-amber-700/50; }
+.band-reject { @apply bg-red-900/40  text-red-300   border border-red-700/50; }
