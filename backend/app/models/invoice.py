@@ -26,6 +26,7 @@ TDS_SECTIONS = Literal["194J", "194C", "194Q", "194I", "194H"]
 class Invoice(Document):
     invoice_id: str = Field(..., description="Unique invoice identifier (e.g. INV-2024-0001)")
     merchant_id: str = Field(..., description="Owning merchant reference")
+    batch_id: Optional[str] = Field(default=None, description="Batch upload ID — set by the upload router")
 
     # Counterparty details
     counterparty_name: str = Field(..., description="Customer / vendor business name (may be abbreviated in bank narration)")

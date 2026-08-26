@@ -25,8 +25,15 @@ from app.core.db import init_db
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
-    """Connect to MongoDB Atlas on startup; nothing to tear down (Motor handles it)."""
+    """Connect to MongoDB Atlas on startup, warm up embedding model."""
     await init_db()
+    # Warm up the sentence-transformer model so the first request isn't slow
+    try:
+        from app.engine.pass3_embedding import preload_model
+        preload_model()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Embedding model preload failed (non-fatal): {e}")
     yield
 
 
@@ -54,15 +61,15 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── Routers (added as each checkpoint builds them) ────────────────────────
-    # from app.api.routes_upload import router as upload_router
-    # from app.api.routes_run import router as run_router
-    # from app.api.routes_results import router as results_router
-    # from app.api.routes_audit import router as audit_router
-    # app.include_router(upload_router, prefix="/api", tags=["batches"])
-    # app.include_router(run_router,    prefix="/api", tags=["run"])
-    # app.include_router(results_router,prefix="/api", tags=["results"])
-    # app.include_router(audit_router,  prefix="/api", tags=["audit"])
+    # ── Routers ───────────────────────────────────────────────────────────────
+    from app.api.routes_upload import router as upload_router
+    from app.api.routes_run import router as run_router
+    from app.api.routes_results import router as results_router
+    from app.api.routes_audit import router as audit_router
+    app.include_router(upload_router, prefix="/api", tags=["batches"])
+    app.include_router(run_router,    prefix="/api", tags=["run"])
+    app.include_router(results_router,prefix="/api", tags=["results", "config"])
+    app.include_router(audit_router,  prefix="/api", tags=["audit"])
 
     return app
 

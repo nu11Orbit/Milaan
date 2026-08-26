@@ -18,6 +18,7 @@ from pydantic import Field
 class BankTransaction(Document):
     txn_id: str = Field(..., description="Unique transaction identifier")
     merchant_id: str = Field(..., description="Owning merchant reference")
+    batch_id: Optional[str] = Field(default=None, description="Batch upload ID — set by the upload router")
 
     # Dates — value_date is the date funds actually clear (may differ from txn_date)
     txn_date: date = Field(..., description="Transaction posting date")
