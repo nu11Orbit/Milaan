@@ -6,6 +6,7 @@ Endpoints:
   GET /api/batches/{id}/matches    — all matches with confidence bands
   GET /api/batches/{id}/exceptions — unresolved records with reason codes
   GET /api/batches/{id}/metrics    — precision/recall + case-category breakdown
+  GET /api/batches/{id}/evaluate   — full evaluation against ground truth
   GET/POST /api/config/thresholds  — live threshold read/write
 """
 
@@ -152,6 +153,28 @@ async def get_metrics(batch_id: str, run_id: Optional[str] = None):
             "review":      settings.threshold_review,
         },
     }
+
+
+# ── Evaluation (precision / recall against ground truth) ──────────────────────
+
+@router.get("/batches/{batch_id}/evaluate")
+async def evaluate_batch(batch_id: str, run_id: Optional[str] = None):
+    """
+    Compute full precision/recall/F1 against GroundTruthLabel records.
+
+    Requires the synthetic data generator to have been run first (it writes
+    GroundTruthLabel documents with batch_id set).
+
+    Returns:
+    - Overall precision/recall/F1 (auto_accept band only for precision)
+    - False-positive ₹ cost (sum of wrongly auto-accepted amounts)
+    - Per case-category breakdown (Cases 1–15)
+    - Exception completeness (must be 100%)
+    - Success criteria pass/fail flags
+    """
+    from app.evaluation.metrics import compute_metrics, metrics_to_dict
+    result = await compute_metrics(batch_id, run_id)
+    return metrics_to_dict(result)
 
 
 # ── Live threshold config ──────────────────────────────────────────────────────
