@@ -29,9 +29,12 @@ async def init_db() -> None:
     from app.models.audit_log_entry import AuditLogEntry
     from app.models.ground_truth_label import GroundTruthLabel
 
+    import certifi
+
     client = AsyncIOMotorClient(
         settings.mongodb_uri,
         serverSelectionTimeoutMS=5000,   # fail fast if Atlas is unreachable
+        tlsCAFile=certifi.where(),       # macOS: python.org Python needs explicit CA bundle
     )
 
     await init_beanie(
