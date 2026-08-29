@@ -19,7 +19,21 @@ The raw running score already encodes per-signal contributions from all 5 passes
 The LLM adjudicator (Pass 5) returns a `confidence_delta` in [-20, +20] that is
 clamped server-side and added here.
 
-  final_score = clamp(running_score + llm_delta, 0, 100)
+Fellegi-Sunter blend (optional)
+────────────────────────────────
+When a Fellegi-Sunter score is supplied (via `fs_score` parameter), the final
+score is a weighted blend:
+
+  final_score = 0.6 × heuristic_score + 0.4 × fs_score + llm_delta
+
+The 60/40 ratio is conservative — it preserves the existing heuristic signal
+whilst meaningfully incorporating the theoretically grounded FS estimate.
+As labeled data accumulates and FS m/u probabilities sharpen, the FS weight
+can be increased toward 1.0 in production.
+
+Without fs_score (fs_score=None), behaviour is identical to the original:
+
+  final_score = heuristic_score + llm_delta
 
 Decision bands (configurable via config, NEVER hardcoded):
   final_score ≥ threshold_auto_accept  → band = "auto_accept"
@@ -80,6 +94,7 @@ class ConfidenceResult:
 def score(
     candidate: CandidateMatch,
     llm_delta:  float = 0.0,
+    fs_score:   Optional[float] = None,
     requires_human_review: bool = False,
     flagged_for_llm: bool = False,
     settings=None,
@@ -92,6 +107,9 @@ def score(
     candidate            : CandidateMatch with all pass contributions populated.
     llm_delta            : Adjustment from Pass 5 LLM adjudication (-20 to +20).
                            Clamped to [-20, +20] here regardless of what the model returned.
+    fs_score             : Fellegi-Sunter score in [0, 100] (optional).
+                           When provided, blended at 60% heuristic / 40% FS.
+                           When None, behaviour is identical to the original formula.
     requires_human_review: True for split matches with >2 txns (Pass 4 gate).
     flagged_for_llm      : True when Pass 4 couldn't resolve due to pool size / name floor.
     settings             : Injected settings (optional).
@@ -106,8 +124,18 @@ def score(
     # Clamp LLM delta server-side (model cannot exceed ±20 regardless of output)
     llm_delta_clamped = max(-20.0, min(20.0, llm_delta))
 
-    pass_score  = candidate.score
-    final_score = max(0.0, min(100.0, pass_score + llm_delta_clamped))
+    pass_score = candidate.score
+
+    # ── Fellegi-Sunter blend (when fs_score provided) ───────────────────────
+    # Conservative 60/40 blend: majority weight stays on heuristic passes (which
+    # are well-tested) while FS contributes a theoretically grounded pull.
+    # When fs_score is None (legacy path), no change in behaviour.
+    if fs_score is not None:
+        blended_score = 0.6 * pass_score + 0.4 * fs_score
+    else:
+        blended_score = pass_score
+
+    final_score = max(0.0, min(100.0, blended_score + llm_delta_clamped))
 
     auto_thr  = settings.threshold_auto_accept
     rev_thr   = settings.threshold_review
@@ -164,6 +192,9 @@ def score(
         "candidate_date_window_days":  settings.candidate_date_window_days,
         "embedding_similarity_floor":  settings.embedding_similarity_floor,
         "split_pool_max_size":         float(settings.split_pool_max_size),
+        # FS metadata — None when FS was not applied
+        "fs_score":   round(fs_score, 2) if fs_score is not None else None,
+        "fs_blend":   "0.6 × heuristic + 0.4 × fs" if fs_score is not None else "heuristic only",
     }
 
     return ConfidenceResult(

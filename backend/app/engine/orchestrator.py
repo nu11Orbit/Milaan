@@ -48,6 +48,7 @@ from app.engine.pass4_split_matcher import (
 )
 from app.engine.pass5_llm_adjudicator import run_pass5, should_run_pass5
 from app.engine.confidence_scorer import ConfidenceResult, near_duplicate_check, score
+from app.engine.fellegi_sunter import FSModel
 from app.engine.schemas import CandidateMatch, InvoiceView, TxnView
 from app.llm.router import LLMRouter
 from app.models.audit_log_entry import AuditLogEntry
@@ -149,6 +150,7 @@ async def _match_one_txn(
     router: LLMRouter,
     settings,
     claimed_invoices: Set[str],
+    fs_model: Optional[FSModel] = None,
 ) -> Optional[Match]:
     """
     Run the full 5-pass pipeline for one transaction.
@@ -228,13 +230,26 @@ async def _match_one_txn(
         if near_duplicate_check(candidates[0].score, candidates[1].score):
             force_review = True
 
+    # ── Fellegi-Sunter score ──────────────────────────────────────────────────
+    # Compute independently from heuristic passes — no circular dependency.
+    # fs_score=None means "FS not available" and scorer falls back to heuristic-only.
+    fs_score: Optional[float] = None
+    if top and not top.is_exception and fs_model is not None:
+        inv_for_fs = inv_map.get(top.invoice_id)
+        if inv_for_fs:
+            try:
+                fs_score = fs_model.compute_score(txn_view, inv_for_fs, settings)
+            except Exception as e:
+                log.warning(f"FS scoring failed for {txn_view.txn_id}/{top.invoice_id}: {e}")
+
     # ── Confidence score pre-LLM ──────────────────────────────────────────────
     flagged = split_result.flagged_for_llm if split_result else False
     req_review = (split_result.requires_human_review if split_result else False) or force_review
 
     cr: ConfidenceResult
     if top:
-        cr = score(top, requires_human_review=req_review, flagged_for_llm=flagged, settings=settings)
+        cr = score(top, requires_human_review=req_review, flagged_for_llm=flagged,
+                   fs_score=fs_score, settings=settings)
     else:
         # No candidate at all even after Pass 4
         match_id = f"MATCH-{uuid.uuid4().hex[:12]}"
@@ -259,6 +274,7 @@ async def _match_one_txn(
             cr = score(
                 top,
                 llm_delta=0.0,   # delta already applied inside run_pass5
+                fs_score=fs_score,
                 requires_human_review=req_review,
                 flagged_for_llm=flagged,
                 settings=settings,
@@ -346,6 +362,22 @@ async def run_reconciliation(
     """
     settings = get_settings()
     router   = LLMRouter(settings)
+    fs_model = FSModel()   # Fellegi-Sunter model — shared across all txns in this batch
+
+    # ── Load FS probability estimates from labeled data (if available) ─────────
+    try:
+        from app.models.ground_truth_label import GroundTruthLabel
+        labels = await GroundTruthLabel.find(
+            GroundTruthLabel.batch_id == batch_id
+        ).to_list()
+        if labels:
+            # Build signal dicts for true and false pairs from ground truth
+            # We approximate here: true_match labels → true_signals, rest → false
+            # Full estimation requires running compare() on each labeled pair
+            # (deferred to post-run analytics for simplicity)
+            log.info(f"FS model: found {len(labels)} labels for batch {batch_id} (priors used for now)")
+    except Exception as e:
+        log.debug(f"FS label loading skipped: {e}")
 
     # ── Idempotency: purge previous run matches ─────────────────────────────
     await Match.find(
@@ -372,6 +404,7 @@ async def run_reconciliation(
         result = await _match_one_txn(
             txn_view, inv_views, inv_map, txn_views,
             batch_id, run_id, router, settings, claimed_invoices,
+            fs_model=fs_model,
         )
 
         # _match_one_txn returns either a plain Match (exception) or a tuple
