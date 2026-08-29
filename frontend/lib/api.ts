@@ -129,3 +129,70 @@ export interface AuditTrail {
   explanation_text: string | null; threshold_snapshot: Record<string, number>;
   reviewed_by: string | null; review_action: string | null; audit_trail: AuditEntry[];
 }
+
+export interface CalibrationCurvePoint {
+  bin_index: number; bin_label: string;
+  mean_confidence: number; empirical_accuracy: number;
+  sample_count: number; ideal: number;
+}
+
+export interface CalibrationResult {
+  batch_id: string; run_id: string | null; sample_size: number; is_calibrated: boolean;
+  raw_metrics: { brier_score: number; expected_calibration_error: number };
+  calibrated_metrics: { brier_score: number; expected_calibration_error: number };
+  brier_improvement_pct: number;
+  calibration_curve: CalibrationCurvePoint[];
+  calibrated_curve: CalibrationCurvePoint[];
+  interpretation: string;
+}
+
+export interface IntegrityResult {
+  batch_id: string; overall_fraud_risk: "low" | "medium" | "high";
+  sample_counts: { invoices_analyzed: number; transactions_analyzed: number };
+  invoice_analysis: {
+    chi2_statistic: number; p_value: number; risk_level: string;
+    digit_distribution: Array<{ digit: number; observed_count: number; observed_pct: number; expected_pct: number; residual: number }>;
+  };
+  transaction_analysis: {
+    chi2_statistic: number; p_value: number; risk_level: string;
+    digit_distribution: Array<{ digit: number; observed_count: number; observed_pct: number; expected_pct: number; residual: number }>;
+  };
+  suspicious_counterparties_count: number;
+  suspicious_counterparties: Array<{
+    counterparty_name: string; total_invoices: number; dominant_leading_digit: number;
+    dominant_digit_count: number; dominant_ratio: number; total_amount_sum: string; flag_reason: string;
+  }>;
+  methodology: string;
+}
+
+export function getCalibration(batchId: string, runId?: string) {
+  const q = runId ? `?run_id=${runId}` : "";
+  return req<CalibrationResult>(`/api/batches/${batchId}/calibration${q}`);
+}
+
+export function getIntegrity(batchId: string) {
+  return req<IntegrityResult>(`/api/batches/${batchId}/integrity`);
+}
+
+export function getPendingLLM(batchId: string, runId?: string) {
+  const q = runId ? `?run_id=${runId}` : "";
+  return req<{
+    batch_id: string;
+    pending_count: number;
+    message: string;
+    matches: Array<{
+      match_id: string;
+      confidence_score: number;
+      confidence_band: string;
+      pending_llm_reason: string | null;
+      line_items: Array<{ txn_id: string | null; invoice_id: string | null }>;
+    }>;
+  }>(`/api/batches/${batchId}/pending-llm${q}`);
+}
+
+export function retryPendingLLM(batchId: string, runId?: string) {
+  const q = runId ? `?run_id=${runId}` : "";
+  return req<{ batch_id: string; retried_total: number; succeeded: number; still_pending: number; message: string }>(`/api/batches/${batchId}/retry-llm${q}`, {
+    method: "POST",
+  });
+}
