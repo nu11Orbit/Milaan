@@ -184,6 +184,18 @@ async def evaluate_batch(batch_id: str, run_id: Optional[str] = None):
     return metrics_to_dict(result)
 
 
+# ── Calibration & Reliability Diagram (Isotonic Regression) ───────────────────
+
+@router.get("/batches/{batch_id}/calibration")
+async def get_batch_calibration(batch_id: str, run_id: Optional[str] = None):
+    """
+    Compute confidence score calibration curve, Brier score, and Expected Calibration Error (ECE)
+    using Isotonic Regression against GroundTruthLabel data.
+    """
+    from app.evaluation.calibration import calibrate_batch
+    return await calibrate_batch(batch_id, run_id)
+
+
 # ── Live threshold config ──────────────────────────────────────────────────────
 
 class ThresholdUpdate(BaseModel):
