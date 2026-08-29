@@ -129,7 +129,7 @@ async def run_pass5(
     inv:       InvoiceView,
     candidate: CandidateMatch,
     router:    LLMRouter,
-) -> tuple[AdjudicationResponse, str, str]:
+) -> tuple[AdjudicationResponse, str, str, bool]:
     """
     Run LLM adjudication for a single (txn, invoice) candidate pair.
 
@@ -142,7 +142,11 @@ async def run_pass5(
 
     Returns
     -------
-    (AdjudicationResponse, provider_used, raw_llm_response)
+    (AdjudicationResponse, provider_used, raw_llm_response, both_rate_limited)
+
+    both_rate_limited=True means both Gemini and Groq were quota-exhausted —
+    the orchestrator should mark Match.pending_llm_enrichment=True so the
+    retry worker can re-run only Pass 5 once quota resets.
 
     The caller (orchestrator) is responsible for:
     - Adding the effective_delta() to the CandidateMatch via candidate.add()
@@ -152,7 +156,7 @@ async def run_pass5(
     user_msg = _build_user_message(txn, inv, candidate)
 
     try:
-        response, provider, raw_text = await router.adjudicate(
+        response, provider, raw_text, both_rate_limited = await router.adjudicate(
             system_prompt=_SYSTEM_PROMPT,
             user_message=user_msg,
         )
@@ -161,7 +165,7 @@ async def run_pass5(
         # but belt-and-suspenders for truly unexpected errors.
         log.error(f"Unexpected error in Pass 5 for {txn.txn_id}/{inv.invoice_id}: {e}")
         fallback = AdjudicationResponse.fallback_no_llm(str(e))
-        return fallback, "fallback_no_llm", ""
+        return fallback, "fallback_no_llm", "", True
 
     # Apply effective delta to the candidate's running score
     delta = response.effective_delta()
@@ -187,7 +191,7 @@ async def run_pass5(
         f"delta={delta:+.1f} → score={candidate.score:.1f}"
     )
 
-    return response, provider, raw_text
+    return response, provider, raw_text, both_rate_limited
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -424,9 +424,10 @@ class TestLLM:
             router._cb_gemini = CircuitBreaker("gemini", 1)
             router._cb_groq   = CircuitBreaker("groq", 1)
             router.max_retries = 0
-            result, provider, raw = await router.adjudicate("sys", "user")
+            result, provider, raw, both_rate_limited = await router.adjudicate("sys", "user")
             assert provider == "fallback_no_llm"
             assert result.assessment == "insufficient_evidence"
+            assert both_rate_limited is True   # confirms pending_llm_enrichment will be set
 
         asyncio.run(run())
 

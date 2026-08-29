@@ -1,7 +1,8 @@
 "use client";
 // app/batches/[batchId]/results/page.tsx — Dashboard + case-category table
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
@@ -15,13 +16,36 @@ export default function ResultsPage() {
   const [metrics, setMetrics]   = useState<Metrics | null>(null);
   const [eval_,   setEval]      = useState<EvalResult | null>(null);
   const [loading, setLoading]   = useState(true);
+  const [retrying, setRetrying] = useState(false);
+  const [retryResult, setRetryResult] = useState<string | null>(null);
 
-  useEffect(() => {
+  const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+  const loadData = useCallback(() => {
+    setLoading(true);
     Promise.all([
       getMetrics(batchId, runId).then(setMetrics),
       getEvaluation(batchId, runId).then(setEval).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, [batchId, runId]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  async function handleRetryLLM() {
+    setRetrying(true);
+    setRetryResult(null);
+    try {
+      const q = runId ? `?run_id=${runId}` : "";
+      const res = await fetch(`${BASE}/api/batches/${batchId}/retry-llm${q}`, { method: "POST" });
+      const data = await res.json();
+      setRetryResult(data.message ?? "Retry complete");
+      loadData(); // refresh metrics after retry
+    } catch {
+      setRetryResult("Retry request failed — check backend logs");
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   if (loading) return <Loading />;
   if (!metrics) return <p className="text-red-400">Could not load metrics for this batch.</p>;
@@ -55,6 +79,34 @@ export default function ResultsPage() {
         <KPI label="Exception Rate"   value={`${metrics.exception_rate}%`}   color="text-red-400" />
         <KPI label="Avg Confidence"   value={`${metrics.avg_confidence_score}`} color="text-blue-400" />
       </div>
+
+      {/* Pending LLM enrichment banner — only shown when providers were rate-limited */}
+      {(metrics.pending_llm_enrichment_count ?? 0) > 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-5 py-4 flex items-start gap-4">
+          <span className="text-2xl">⏳</span>
+          <div className="flex-1">
+            <p className="font-semibold text-amber-300">
+              {metrics.pending_llm_enrichment_count} records pending LLM enrichment
+            </p>
+            <p className="text-sm text-amber-200/70 mt-1">
+              Deterministic score (Passes 1–4) shown. LLM narrative will auto-upgrade
+              once provider quota resets — no records re-processed from scratch.
+            </p>
+            {retryResult && (
+              <p className="mt-2 text-sm font-medium text-amber-100">{retryResult}</p>
+            )}
+          </div>
+          <button
+            onClick={handleRetryLLM}
+            disabled={retrying}
+            className="shrink-0 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400
+                       disabled:opacity-50 disabled:cursor-not-allowed text-black
+                       font-semibold text-sm transition-colors"
+          >
+            {retrying ? "Retrying…" : "Retry Now"}
+          </button>
+        </div>
+      )}
 
       {/* Precision/Recall if eval available */}
       {eval_ && (

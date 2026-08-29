@@ -66,10 +66,12 @@ def create_app() -> FastAPI:
     from app.api.routes_run import router as run_router
     from app.api.routes_results import router as results_router
     from app.api.routes_audit import router as audit_router
-    app.include_router(upload_router, prefix="/api", tags=["batches"])
-    app.include_router(run_router,    prefix="/api", tags=["run"])
-    app.include_router(results_router,prefix="/api", tags=["results", "config"])
-    app.include_router(audit_router,  prefix="/api", tags=["audit"])
+    from app.api.routes_retry_llm import router as retry_llm_router
+    app.include_router(upload_router,    prefix="/api", tags=["batches"])
+    app.include_router(run_router,       prefix="/api", tags=["run"])
+    app.include_router(results_router,   prefix="/api", tags=["results", "config"])
+    app.include_router(audit_router,     prefix="/api", tags=["audit"])
+    app.include_router(retry_llm_router, prefix="/api", tags=["llm-retry"])
 
     return app
 

@@ -93,6 +93,25 @@ class Match(Document):
         description="Human-readable elaboration of the exception reason",
     )
 
+    # ── Pending LLM enrichment ────────────────────────────────────────────────
+    # Set to True when Pass 5 was skipped because BOTH providers were
+    # rate-limited / quota-exceeded (not because evidence was insufficient).
+    # This is NOT a confidence band — a record can be 'review' band AND
+    # pending_llm_enrichment at the same time.
+    # Cleared to False when the retry worker successfully runs Pass 5.
+    pending_llm_enrichment: bool = Field(
+        default=False,
+        description=(
+            "True when Pass 5 was skipped due to provider rate-limiting. "
+            "Pass 1-4 scores are final; only the LLM narrative + delta is missing. "
+            "Cleared automatically when the retry worker completes Pass 5."
+        ),
+    )
+    pending_llm_reason: Optional[str] = Field(
+        default=None,
+        description="Human-readable reason the LLM pass was deferred (e.g. provider error message)",
+    )
+
     # Timestamps + human review
     created_at: datetime = Field(default_factory=datetime.utcnow)
     reviewed_by: Optional[str] = Field(default=None, description="User ID of human reviewer")
@@ -110,4 +129,6 @@ class Match(Document):
             IndexModel([("created_at", DESCENDING)]),
             # Compound index for fast exception listing
             IndexModel([("batch_id", ASCENDING), ("confidence_band", ASCENDING)]),
+            # Index for the LLM retry worker — find all pending records efficiently
+            IndexModel([("pending_llm_enrichment", ASCENDING), ("batch_id", ASCENDING)]),
         ]

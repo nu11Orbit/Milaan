@@ -138,6 +138,7 @@ async def get_metrics(batch_id: str, run_id: Optional[str] = None):
         score_sum += m.confidence_score
 
     settings = get_settings()
+    pending_count = sum(1 for m in matches if getattr(m, "pending_llm_enrichment", False))
 
     return {
         "batch_id": batch_id,
@@ -148,6 +149,12 @@ async def get_metrics(batch_id: str, run_id: Optional[str] = None):
         "avg_confidence_score": round(score_sum / total, 2),
         "auto_accept_rate": round(by_band["auto_accept"] / total * 100, 1),
         "exception_rate":   round(by_band["reject"] / total * 100, 1),
+        "pending_llm_enrichment_count": pending_count,
+        "pending_llm_enrichment_message": (
+            f"{pending_count} records showing deterministic score only — "
+            "LLM narrative pending quota reset. Use POST /api/batches/{id}/retry-llm to enrich."
+            if pending_count else None
+        ),
         "thresholds_used": {
             "auto_accept": settings.threshold_auto_accept,
             "review":      settings.threshold_review,

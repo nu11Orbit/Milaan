@@ -100,6 +100,8 @@ export interface Metrics {
   by_match_type: Record<string, number>;
   by_explanation_source: Record<string, number>;
   avg_confidence_score: number; auto_accept_rate: number; exception_rate: number;
+  pending_llm_enrichment_count?: number;
+  pending_llm_enrichment_message?: string | null;
   thresholds_used: { auto_accept: number; review: number };
 }
 

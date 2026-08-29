@@ -153,15 +153,18 @@ class LLMRouter:
         self,
         system_prompt: str,
         user_message:  str,
-    ) -> Tuple[AdjudicationResponse, str, str]:
+    ) -> tuple[AdjudicationResponse, str, str, bool]:
         """
         Route to Gemini, fall back to Groq, return safe fallback if both fail.
 
         Returns
         -------
-        (AdjudicationResponse, provider_name, raw_response_text)
+        (AdjudicationResponse, provider_name, raw_response_text, both_rate_limited)
 
         provider_name is one of: "gemini", "groq", "fallback_no_llm"
+        both_rate_limited is True ONLY when both providers were attempted and
+        failed due to quota/rate-limit (not returned for genuine insufficient_evidence).
+        The caller sets pending_llm_enrichment=True on the Match in this case.
         """
         # ── Primary: Gemini ────────────────────────────────────────────────────
         result = await self._try_provider(
@@ -170,7 +173,7 @@ class LLMRouter:
         )
         if result:
             raw_text, response = result
-            return response, "gemini", raw_text
+            return response, "gemini", raw_text, False
 
         # ── Fallback: Groq ─────────────────────────────────────────────────────
         result = await self._try_provider(
@@ -179,9 +182,10 @@ class LLMRouter:
         )
         if result:
             raw_text, response = result
-            return response, "groq", raw_text
+            return response, "groq", raw_text, False
 
         # ── Both exhausted → safe fallback ────────────────────────────────────
         log.error("Both Gemini and Groq exhausted — returning fallback_no_llm")
         fallback = AdjudicationResponse.fallback_no_llm("Both Gemini and Groq providers failed")
-        return fallback, "fallback_no_llm", ""
+        # both_rate_limited=True → orchestrator will set pending_llm_enrichment on the Match
+        return fallback, "fallback_no_llm", "", True

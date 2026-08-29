@@ -248,11 +248,13 @@ async def _match_one_txn(
         )
 
     # ── Pass 5 (LLM) ──────────────────────────────────────────────────────────
-    llm_response, llm_provider, llm_raw = None, "none", ""
+    llm_response, llm_provider, llm_raw, both_rate_limited = None, "none", "", False
     if should_run_pass5(top, req_review, flagged, settings):
         inv_for_llm = inv_map.get(top.invoice_id)
         if inv_for_llm:
-            llm_response, llm_provider, llm_raw = await run_pass5(txn_view, inv_for_llm, top, router)
+            llm_response, llm_provider, llm_raw, both_rate_limited = await run_pass5(
+                txn_view, inv_for_llm, top, router
+            )
             # Re-score with LLM delta already applied to top.score via candidate.add()
             cr = score(
                 top,
@@ -306,6 +308,13 @@ async def _match_one_txn(
         line_items=line_items,
         threshold_snapshot=cr.threshold_snapshot,
         exception_reason_category=top.exception_reason_category if top.is_exception else None,
+        # Pending LLM enrichment: only when BOTH providers were rate-limited.
+        # Not set for genuine insufficient_evidence — that's a content signal, not infra failure.
+        pending_llm_enrichment=both_rate_limited,
+        pending_llm_reason=(
+            "Both Gemini and Groq rate-limited — LLM narrative pending quota reset"
+            if both_rate_limited else None
+        ),
     )
 
     return match, top, cr, llm_provider, llm_raw
