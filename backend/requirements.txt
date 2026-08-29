@@ -23,11 +23,13 @@ python-dotenv==1.0.1
 # ── Synthetic data generation ─────────────────────────────────────────────────
 faker==33.0.0
 
-# ── Matching engine ───────────────────────────────────────────────────────────
+# ── Matching engine & Optimization ─────────────────────────────────────────────
 # rapidfuzz: unpinned so pip picks a wheel compatible with your Python version
 rapidfuzz>=3.9.0
 # numpy: 2.x required for Python 3.13+; 1.x is fine for 3.11/3.12
 numpy>=1.26.4,<3.0
+scipy>=1.13.0                   # Hungarian algorithm for optimal bipartite assignment
+scikit-learn>=1.4.0             # Isotonic regression calibration & evaluation
 # sentence-transformers pulls torch (~500MB first install, cached after).
 # On CPU-only machines this is fine — the all-MiniLM-L6-v2 model runs on CPU.
 sentence-transformers==3.3.1

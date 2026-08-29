@@ -49,6 +49,7 @@ from app.engine.pass4_split_matcher import (
 from app.engine.pass5_llm_adjudicator import run_pass5, should_run_pass5
 from app.engine.confidence_scorer import ConfidenceResult, near_duplicate_check, score
 from app.engine.fellegi_sunter import FSModel
+from app.engine.hungarian_matcher import apply_hungarian_to_batch
 from app.engine.schemas import CandidateMatch, InvoiceView, TxnView
 from app.llm.router import LLMRouter
 from app.models.audit_log_entry import AuditLogEntry
@@ -151,6 +152,7 @@ async def _match_one_txn(
     settings,
     claimed_invoices: Set[str],
     fs_model: Optional[FSModel] = None,
+    candidate_scores_collector: Optional[Dict[Tuple[str, str], float]] = None,
 ) -> Optional[Match]:
     """
     Run the full 5-pass pipeline for one transaction.
@@ -204,6 +206,11 @@ async def _match_one_txn(
     candidates = run_pass2(txn_view, candidates, narrow_map)
     if any(c.resolved_by is None for c in candidates):
         candidates = run_pass3(txn_view, candidates, narrow_map, settings)
+
+    if candidate_scores_collector is not None:
+        for c in candidates:
+            if c.invoice_id and not c.is_exception:
+                candidate_scores_collector[(txn_view.txn_id, c.invoice_id)] = c.score
 
     top = candidates[0] if candidates else None
 
@@ -389,12 +396,12 @@ async def run_reconciliation(
     txn_views = [_txn_to_view(t) for t in txn_docs]
     inv_views = [_invoice_to_view(i) for i in invoice_docs]
     inv_map   = {iv.invoice_id: iv for iv in inv_views}
-
     # ── Sort txns: larger amounts first for greedy assignment ─────────────────
     txn_views.sort(key=lambda t: t.amount, reverse=True)
 
     claimed_invoices: Set[str] = set()
-    pending_matches  = []   # (match_doc, top_candidate, conf_result, llm_provider, llm_raw)
+    pending_matches  = []   # (match_doc, top_candidate, conf_result, llm_provider, llm_raw, txn_view)
+    all_candidate_scores: Dict[Tuple[str, str], float] = {}
 
     total = len(txn_views)
 
@@ -405,6 +412,7 @@ async def run_reconciliation(
             txn_view, inv_views, inv_map, txn_views,
             batch_id, run_id, router, settings, claimed_invoices,
             fs_model=fs_model,
+            candidate_scores_collector=all_candidate_scores,
         )
 
         # _match_one_txn returns either a plain Match (exception) or a tuple
@@ -432,6 +440,13 @@ async def run_reconciliation(
                 "match_type": match.match_type,
             }
             await sse_queue.put(_sse_event(event))
+
+    # ── Hungarian Global Bipartite Optimization ──────────────────────────────
+    pending_matches, hungarian_audits = apply_hungarian_to_batch(
+        pending_matches=pending_matches,
+        all_candidate_scores=all_candidate_scores,
+        inv_map=inv_map,
+    )
 
     # ── Persist matches + write audit logs ────────────────────────────────────
     auto_accept_count = review_count = reject_count = 0
@@ -486,6 +501,17 @@ async def run_reconciliation(
                 llm_fallback=(llm_prov == "groq"),
                 llm_both_failed=(llm_prov == "fallback_no_llm"),
             )
+
+    # Audit: Hungarian reassignments (if any occurred)
+    for match_id, pass_name, reasoning in hungarian_audits:
+        await _write_audit(
+            match_id=match_id,
+            batch_id=batch_id,
+            pass_name=pass_name,
+            score_delta=None,
+            score_after=None,
+            reasoning=reasoning,
+        )
 
     # ── SSE: finalize ──────────────────────────────────────────────────────────
     if sse_queue:

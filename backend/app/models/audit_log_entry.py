@@ -32,6 +32,8 @@ class AuditLogEntry(Document):
         "pass3_embedding",
         "pass4_split_matcher",
         "pass5_llm",
+        "pass5_llm_retry",
+        "hungarian_reassignment",
         "confidence_scorer",
         "decision_router",
         "human_review",
