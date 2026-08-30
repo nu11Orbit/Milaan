@@ -1,9 +1,10 @@
 "use client";
-// app/batches/new/page.tsx — CSV upload form
+// app/batches/new/page.tsx — Modern FinTech SaaS Batch Intake Portal
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { uploadBatch, triggerRun } from "@/lib/api";
+import { UploadCloud, AlertCircle, CheckCircle2, ArrowRight, FileSpreadsheet } from "lucide-react";
 
 export default function NewBatchPage() {
   const router = useRouter();
@@ -12,12 +13,17 @@ export default function NewBatchPage() {
   const [invFile, setInvFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [parseErrors, setParseErrors] = useState<any[]>([]);
+  const [parseErrors, setParseErrors] = useState<Array<{ errors: Record<string, string[]> }>>([]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!bankFile || !invFile) { setError("Both CSV files are required."); return; }
-    setLoading(true); setError(null); setParseErrors([]);
+    if (!bankFile || !invFile) {
+      setError("Both Bank Statement CSV and Invoice Register CSV are required.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setParseErrors([]);
     try {
       const fd = new FormData();
       fd.append("merchant_id", merchantId);
@@ -25,69 +31,99 @@ export default function NewBatchPage() {
       fd.append("invoice_csv", invFile);
       const batch = await uploadBatch(fd);
       if (batch.parse_errors?.length) setParseErrors(batch.parse_errors);
-      // Trigger run immediately
+      
+      // Trigger reconciliation pipeline run immediately
       const run = await triggerRun(batch.batch_id);
       router.push(`/batches/${batch.batch_id}/run?runId=${run.run_id}`);
-    } catch (err: any) {
-      setError(err.message ?? "Upload failed");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Upload failed";
+      setError(msg);
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="max-w-xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-white">New Reconciliation Batch</h1>
-        <p className="text-slate-400 text-sm mt-1">
-          Upload your bank statement CSV and invoice register CSV.
-          Supports ₹ symbol, Indian digit grouping, and DD-MM-YYYY dates.
+    <div className="max-w-2xl mx-auto space-y-8 py-4">
+      {/* Header */}
+      <div className="space-y-2">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-xs font-mono text-emerald-400">
+          <FileSpreadsheet className="w-3.5 h-3.5" />
+          <span>Batch Intake Portal</span>
+        </div>
+        <h1 className="text-3xl font-extrabold text-white tracking-tight">New Reconciliation Intake</h1>
+        <p className="text-slate-400 text-sm leading-relaxed">
+          Upload your bank statement and invoice register. Indian format engine parses ₹ currency formats, Lakhs/Crores digit grouping, and multi-format transaction timestamps.
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-5 bg-slate-900/60 border border-slate-800 rounded-2xl p-6">
-        {/* Merchant ID */}
-        <div>
-          <label className="block text-sm text-slate-300 mb-1">Merchant ID</label>
+      <form onSubmit={handleSubmit} className="space-y-6 glass-panel rounded-2xl p-8 border border-white/10 shadow-2xl">
+        {/* Merchant Identifier */}
+        <div className="space-y-2">
+          <label className="block text-xs font-mono uppercase tracking-wider text-slate-300 font-semibold">
+            Merchant / Enterprise ID
+          </label>
           <input
-            type="text" value={merchantId} onChange={e => setMerchantId(e.target.value)}
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+            type="text"
+            value={merchantId}
+            onChange={(e) => setMerchantId(e.target.value)}
+            className="w-full bg-slate-950/80 border border-white/10 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl px-4 py-3 text-sm text-slate-100 font-mono focus:outline-none transition-all"
+            placeholder="e.g. MER-001"
           />
         </div>
 
-        {/* Bank CSV */}
+        {/* Bank CSV File Input */}
         <FileInput
           label="Bank Statement CSV"
-          hint="Columns: txn_id, txn_date, amount, direction, narration, channel, reference_number"
+          hint="txn_id, txn_date, amount, direction, narration, channel, reference_number"
           onChange={setBankFile}
           accept=".csv"
         />
 
-        {/* Invoice CSV */}
+        {/* Invoice CSV File Input */}
         <FileInput
           label="Invoice Register CSV"
-          hint="Columns: invoice_id, invoice_date, counterparty_name, base_amount, total_amount, tds_section, tds_amount"
+          hint="invoice_id, invoice_date, counterparty_name, base_amount, total_amount, tds_section, tds_amount"
           onChange={setInvFile}
           accept=".csv"
         />
 
-        {error && <p className="text-red-400 text-sm">{error}</p>}
+        {error && (
+          <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-mono flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
 
         <button
-          type="submit" disabled={loading}
-          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-lg transition-colors"
+          type="submit"
+          disabled={loading}
+          className="w-full btn-primary-glow py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
         >
-          {loading ? "Uploading & Starting Run…" : "Upload & Run Reconciliation →"}
+          {loading ? (
+            <span className="flex items-center gap-2">
+              <span className="w-4 h-4 rounded-full border-2 border-slate-900 border-t-transparent animate-spin" />
+              <span>Ingesting CSV & Initializing 5-Pass Pipeline…</span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-2">
+              <span>Execute 5-Pass AI Pipeline</span>
+              <ArrowRight className="w-4 h-4" />
+            </span>
+          )}
         </button>
       </form>
 
-      {/* Parse errors */}
+      {/* Parse errors banner */}
       {parseErrors.length > 0 && (
-        <div className="bg-amber-900/20 border border-amber-700/40 rounded-xl p-4 space-y-2">
-          <p className="text-amber-300 text-sm font-medium">{parseErrors.length} rows skipped (parse errors)</p>
-          <div className="max-h-40 overflow-y-auto space-y-1">
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-6 space-y-3 font-mono">
+          <div className="flex items-center gap-2 text-amber-300 text-sm font-bold">
+            <AlertCircle className="w-4 h-4" />
+            <span>{parseErrors.length} rows flagged with parsing anomalies</span>
+          </div>
+          <div className="max-h-40 overflow-y-auto space-y-1 bg-slate-950 rounded-xl p-3.5 border border-white/5 text-[11px] text-amber-200/80">
             {parseErrors.slice(0, 20).map((e, i) => (
-              <div key={i} className="text-amber-400/70 text-xs font-mono">{JSON.stringify(e.errors)}</div>
+              <div key={i}>{JSON.stringify(e.errors)}</div>
             ))}
           </div>
         </div>
@@ -96,28 +132,54 @@ export default function NewBatchPage() {
   );
 }
 
-function FileInput({ label, hint, onChange, accept }: {
-  label: string; hint: string;
-  onChange: (f: File | null) => void; accept: string;
+function FileInput({
+  label,
+  hint,
+  onChange,
+  accept,
+}: {
+  label: string;
+  hint: string;
+  onChange: (f: File | null) => void;
+  accept: string;
 }) {
   const [name, setName] = useState<string | null>(null);
+
   return (
-    <div>
-      <label className="block text-sm text-slate-300 mb-1">{label}</label>
-      <label className="block cursor-pointer">
-        <div className="border-2 border-dashed border-slate-700 hover:border-blue-600 rounded-lg px-4 py-6 text-center transition-colors">
-          {name
-            ? <p className="text-green-400 text-sm">✓ {name}</p>
-            : <p className="text-slate-500 text-sm">Click to select or drop a CSV file</p>
-          }
+    <div className="space-y-2">
+      <label className="block text-xs font-mono uppercase tracking-wider text-slate-300 font-semibold">{label}</label>
+      <label className="block cursor-pointer group">
+        <div
+          className={`border-2 border-dashed rounded-xl px-5 py-6 text-center transition-all ${
+            name
+              ? "border-emerald-500/60 bg-emerald-500/[0.06]"
+              : "border-white/10 hover:border-emerald-500/50 bg-slate-950/50 hover:bg-slate-950/80"
+          }`}
+        >
+          {name ? (
+            <div className="flex items-center justify-center gap-2 text-emerald-400 text-sm font-medium">
+              <CheckCircle2 className="w-5 h-5" />
+              <span className="font-mono text-xs">{name}</span>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <UploadCloud className="w-7 h-7 mx-auto text-slate-400 group-hover:text-emerald-400 transition-colors" />
+              <p className="text-xs text-slate-300 font-medium">Click to select or drag & drop CSV</p>
+              <p className="text-[11px] text-slate-500 font-mono">{hint}</p>
+            </div>
+          )}
         </div>
-        <input type="file" accept={accept} className="hidden" onChange={e => {
-          const f = e.target.files?.[0] ?? null;
-          setName(f?.name ?? null);
-          onChange(f);
-        }} />
+        <input
+          type="file"
+          accept={accept}
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0] ?? null;
+            setName(f?.name ?? null);
+            onChange(f);
+          }}
+        />
       </label>
-      <p className="text-slate-600 text-xs mt-1">{hint}</p>
     </div>
   );
 }
