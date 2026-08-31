@@ -12,24 +12,22 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
-      <body className="min-h-screen flex flex-col bg-[var(--bg)] text-[var(--ink)] antialiased selection:bg-[var(--gold)]/20 selection:text-white overflow-x-hidden">
+    <html lang="en">
+      <body className="min-h-screen flex flex-col bg-[var(--bg)] text-[var(--ink)] antialiased selection:bg-[var(--border-hi)]/20 selection:text-black overflow-x-hidden">
 
-        {/* ── Dynamic igloo-style wireframe parallax canvas ── */}
+        {/* ── Dynamic 3D Workspace Canvas (Fixed Background) ── */}
         <MilaanCanvas />
 
-        {/* ── Navigation ── */}
-        <header className="sticky top-0 z-50 border-b border-[var(--border)] bg-[var(--bg)]/80 backdrop-blur-2xl">
+        {/* ── Navigation Header ── */}
+        <header className="sticky top-0 z-50 border-b border-[var(--border)] bg-[var(--bg)]">
           <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
 
             {/* Logo */}
             <Link href="/" className="flex items-center gap-2.5 group">
-              {/* Monogram mark */}
-              <div className="w-7 h-7 rounded-md flex items-center justify-center border border-[var(--gold)]/40 group-hover:border-[var(--gold)] transition-colors"
-                   style={{ background: "rgba(201,169,110,0.08)" }}>
-                <span className="font-mono text-[var(--gold)] font-bold text-xs">M</span>
+              <div className="w-7 h-7 rounded-md flex items-center justify-center border border-[var(--border-hi)] group-hover:bg-[var(--border-hi)] transition-colors">
+                <span className="font-mono text-[var(--border-hi)] group-hover:text-white font-bold text-xs transition-colors">M</span>
               </div>
-              <span className="font-display font-semibold text-sm tracking-wide text-[var(--ink)] group-hover:text-[var(--mist)] transition-colors">
+              <span className="font-display font-semibold text-sm tracking-wide text-[var(--ink)]">
                 Milaan
               </span>
             </Link>
@@ -38,13 +36,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <nav className="hidden md:flex items-center gap-1">
               {[
                 { href: "/", label: "Overview" },
-                { href: "/#algorithms", label: "Architecture" },
-                { href: "/#simulator", label: "Sandbox" },
+                { href: "/#architecture", label: "Architecture" },
               ].map(({ href, label }) => (
                 <Link
                   key={href}
                   href={href}
-                  className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-white/[0.04] transition-all"
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-[var(--border)]/30 transition-all"
                 >
                   {label}
                 </Link>
@@ -71,19 +68,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </main>
 
         {/* ── Footer ── */}
-        <footer className="border-t border-[var(--border)] py-10 px-6 relative z-10">
+        <footer className="border-t border-[var(--border)] py-10 px-6 relative z-10 bg-[var(--bg)]">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-5 h-5 rounded border border-[var(--gold)]/40 flex items-center justify-center">
-                <span className="font-mono text-[var(--gold)] font-bold text-[9px]">M</span>
+              <div className="w-5 h-5 rounded border border-[var(--border-hi)] flex items-center justify-center">
+                <span className="font-mono text-[var(--border-hi)] font-bold text-[9px]">M</span>
               </div>
-              <span className="hud-label text-[var(--ink-dim)]">
+              <span className="hud-label text-[var(--ink-muted)]">
                 Milaan Autonomous Reconciliation Engine
               </span>
             </div>
             <div className="flex items-center gap-6">
               {["Fellegi-Sunter", "Hungarian O(n³)", "Benford χ²", "Isotonic Calibration"].map(t => (
-                <span key={t} className="hud-label text-[var(--ink-dim)]">{t}</span>
+                <span key={t} className="hud-label text-[var(--ink-muted)]">{t}</span>
               ))}
             </div>
           </div>

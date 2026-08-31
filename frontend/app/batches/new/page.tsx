@@ -51,13 +51,13 @@ export default function NewBatchPage() {
           <FileSpreadsheet className="w-3.5 h-3.5" />
           <span>Batch Intake Portal</span>
         </div>
-        <h1 className="text-3xl font-extrabold text-white tracking-tight">New Reconciliation Intake</h1>
-        <p className="text-slate-400 text-sm leading-relaxed">
+        <h1 className="text-3xl font-extrabold text-white tracking-tight drop-shadow-md">New Reconciliation Intake</h1>
+        <p className="text-[var(--ink-muted)] text-sm leading-relaxed max-w-xl drop-shadow-md bg-black/20 p-2 rounded-lg">
           Upload your bank statement and invoice register. Indian format engine parses ₹ currency formats, Lakhs/Crores digit grouping, and multi-format transaction timestamps.
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6 glass-panel rounded-2xl p-8 border border-white/10 shadow-2xl">
+      <form onSubmit={handleSubmit} className="space-y-6 bg-[var(--bg-surface)] rounded-2xl p-8 border border-[var(--border)] shadow-2xl relative z-10">
         {/* Merchant Identifier */}
         <div className="space-y-2">
           <label className="block text-xs font-mono uppercase tracking-wider text-slate-300 font-semibold">
@@ -67,7 +67,7 @@ export default function NewBatchPage() {
             type="text"
             value={merchantId}
             onChange={(e) => setMerchantId(e.target.value)}
-            className="w-full bg-slate-950/80 border border-white/10 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl px-4 py-3 text-sm text-slate-100 font-mono focus:outline-none transition-all"
+            className="w-full bg-[var(--bg)] border border-[var(--border)] focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl px-4 py-3 text-sm text-white font-mono focus:outline-none transition-all"
             placeholder="e.g. MER-001"
           />
         </div>
@@ -98,7 +98,7 @@ export default function NewBatchPage() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full btn-primary-glow py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          className="w-full btn-primary py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
         >
           {loading ? (
             <span className="flex items-center gap-2">
@@ -152,8 +152,8 @@ function FileInput({
         <div
           className={`border-2 border-dashed rounded-xl px-5 py-6 text-center transition-all ${
             name
-              ? "border-emerald-500/60 bg-emerald-500/[0.06]"
-              : "border-white/10 hover:border-emerald-500/50 bg-slate-950/50 hover:bg-slate-950/80"
+              ? "border-emerald-500 bg-emerald-950/30"
+              : "border-[var(--border)] hover:border-emerald-500/50 bg-[var(--bg)] hover:bg-[var(--bg-surface-elevated)]"
           }`}
         >
           {name ? (

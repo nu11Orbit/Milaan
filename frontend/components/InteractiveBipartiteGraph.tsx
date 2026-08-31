@@ -44,7 +44,7 @@ export default function InteractiveBipartiteGraph() {
   };
 
   return (
-    <div className="glass rounded-2xl p-6 sm:p-8 space-y-6 border border-[var(--border)] relative overflow-hidden">
+    <div className="bg-[var(--bg-surface)] rounded-2xl p-6 sm:p-8 space-y-6 border border-[var(--border)] shadow-md relative overflow-hidden">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[var(--border)]">
         <div className="space-y-1">
@@ -77,8 +77,8 @@ export default function InteractiveBipartiteGraph() {
               onMouseEnter={() => setActiveEdge(idx)}
               className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
                 activeEdge === idx
-                  ? "bg-white/[0.06] border-[var(--green)]/80 shadow-lg shadow-[var(--green)]/10"
-                  : "bg-white/[0.02] border-[var(--border)] hover:border-white/20"
+                  ? "bg-[var(--bg)] border-[var(--green)] shadow-lg shadow-[var(--green)]/10"
+                  : "bg-[var(--bg-surface-elevated)] border-[var(--border)] hover:border-[var(--border-hi)]"
               }`}
             >
               <div className="flex justify-between items-center text-[var(--ink)] font-bold">
@@ -98,7 +98,7 @@ export default function InteractiveBipartiteGraph() {
               className={`w-full h-0.5 transition-all duration-500 ${
                 solvedEdges.includes(idx)
                   ? "bg-[var(--gold)]"
-                  : "bg-white/10"
+                  : "bg-[var(--border)]"
               }`}
             />
           ))}
@@ -115,8 +115,8 @@ export default function InteractiveBipartiteGraph() {
               onMouseEnter={() => setActiveEdge(idx)}
               className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
                 activeEdge === idx
-                  ? "bg-white/[0.06] border-[var(--gold)]/80 shadow-lg shadow-[var(--gold)]/10"
-                  : "bg-white/[0.02] border-[var(--border)] hover:border-white/20"
+                  ? "bg-[var(--bg)] border-[var(--gold)] shadow-lg shadow-[var(--gold)]/10"
+                  : "bg-[var(--bg-surface-elevated)] border-[var(--border)] hover:border-[var(--border-hi)]"
               }`}
             >
               <div className="flex justify-between items-center text-[var(--ink)] font-bold">
@@ -130,7 +130,7 @@ export default function InteractiveBipartiteGraph() {
       </div>
 
       {/* Telemetry Output Bar */}
-      <div className="p-3.5 rounded-xl glass border border-[var(--border)] font-mono text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[var(--ink-muted)]">
+      <div className="p-3.5 rounded-xl bg-[var(--bg-surface-elevated)] border border-[var(--border)] font-mono text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[var(--ink-muted)] shadow-md">
         <div className="flex items-center gap-2 text-[var(--green)]">
           <CheckCircle2 className="w-4 h-4 shrink-0" />
           <span>Global Cost: <strong>0.00</strong> (100% Optimal Assignment without greedy collision)</span>
