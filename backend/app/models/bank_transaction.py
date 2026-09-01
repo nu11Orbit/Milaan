@@ -8,11 +8,26 @@ from __future__ import annotations
 
 from decimal import Decimal
 from datetime import date
-from typing import Optional, Literal
+from typing import Optional, Literal, Annotated
 
 from beanie import Document
 from pymongo import IndexModel, TEXT, ASCENDING, DESCENDING
 from pydantic import Field
+from pydantic.functional_validators import BeforeValidator
+
+
+def _coerce_decimal(v: object) -> object:
+    """Convert BSON Decimal128 to a plain Decimal before Pydantic validation."""
+    try:
+        from bson import Decimal128
+        if isinstance(v, Decimal128):
+            return Decimal(str(v))
+    except ImportError:
+        pass
+    return v
+
+
+PyDecimal = Annotated[Decimal, BeforeValidator(_coerce_decimal)]
 
 
 class BankTransaction(Document):
@@ -28,7 +43,7 @@ class BankTransaction(Document):
     )
 
     # Amount is always positive; direction carries the sign semantics
-    amount: Decimal = Field(..., gt=Decimal("0"), description="Transaction amount in INR (always positive)")
+    amount: PyDecimal = Field(..., gt=Decimal("0"), description="Transaction amount in INR (always positive)")
     direction: Literal["credit", "debit"] = Field(
         ...,
         description="'credit' = money received into merchant account; 'debit' = money leaving",
@@ -58,7 +73,7 @@ class BankTransaction(Document):
         ),
     )
 
-    running_balance: Optional[Decimal] = Field(
+    running_balance: Optional[PyDecimal] = Field(
         default=None,
         description="Account running balance after this transaction, if provided by the bank",
     )
