@@ -1,10 +1,10 @@
 "use client";
-// app/batches/new/page.tsx — Modern FinTech SaaS Batch Intake Portal
+// app/batches/new/page.tsx — Autonomous Reconciliation Intake Portal
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { uploadBatch, triggerRun } from "@/lib/api";
-import { UploadCloud, AlertCircle, CheckCircle2, ArrowRight, FileSpreadsheet } from "lucide-react";
+import { UploadCloud, AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
 
 export default function NewBatchPage() {
   const router = useRouter();
@@ -44,90 +44,135 @@ export default function NewBatchPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-8 py-4">
-      {/* Header */}
-      <div className="space-y-2">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-xs font-mono text-emerald-400">
-          <FileSpreadsheet className="w-3.5 h-3.5" />
-          <span>Batch Intake Portal</span>
+    <div className="w-full min-h-screen bg-[#15120E] text-[#EDE6D6] py-16 px-6 sm:px-12 flex justify-center">
+      <div className="max-w-3xl w-full space-y-10">
+        
+        {/* Editorial Header */}
+        <div className="space-y-3 border-b border-[rgba(237,230,214,0.08)] pb-8">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#6E2B34]" />
+            <span className="font-mono text-xs font-semibold uppercase tracking-widest text-[#B4875A]">
+              Intake Dispatch · Section 194C / 194J Multilateral Ingestion
+            </span>
+          </div>
+          <h1 className="font-display font-light text-4xl sm:text-5xl text-[#EDE6D6] tracking-tight">
+            New Ledger Reconciliation Intake
+          </h1>
+          <p className="font-body text-base text-[#A69A85] leading-relaxed max-w-2xl">
+            Upload your unstructured bank statement and ERP invoice register. Our engine parses Indian ₹ currency structures, Lakhs/Crores digit grouping, and multi-format transaction timestamps.
+          </p>
         </div>
-        <h1 className="text-3xl font-extrabold text-white tracking-tight drop-shadow-md">New Reconciliation Intake</h1>
-        <p className="text-[var(--ink-muted)] text-sm leading-relaxed max-w-xl drop-shadow-md bg-black/20 p-2 rounded-lg">
-          Upload your bank statement and invoice register. Indian format engine parses ₹ currency formats, Lakhs/Crores digit grouping, and multi-format transaction timestamps.
-        </p>
-      </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6 bg-[var(--bg-surface)] rounded-2xl p-8 border border-[var(--border)] shadow-2xl relative z-10">
-        {/* Merchant Identifier */}
-        <div className="space-y-2">
-          <label className="block text-xs font-mono uppercase tracking-wider text-slate-300 font-semibold">
-            Merchant / Enterprise ID
-          </label>
-          <input
-            type="text"
-            value={merchantId}
-            onChange={(e) => setMerchantId(e.target.value)}
-            className="w-full bg-[var(--bg)] border border-[var(--border)] focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl px-4 py-3 text-sm text-white font-mono focus:outline-none transition-all"
-            placeholder="e.g. MER-001"
+        {/* Form Card */}
+        <form
+          onSubmit={handleSubmit}
+          style={{
+            backgroundColor: "#1D1812",
+            border: "1px solid rgba(180, 135, 90, 0.25)",
+            borderRadius: "16px",
+            boxShadow: "0 4px 24px rgba(21, 18, 14, 0.6)",
+          }}
+          className="space-y-8 p-8 sm:p-10 relative z-10"
+        >
+          {/* Merchant Identifier */}
+          <div className="space-y-2.5">
+            <label
+              style={{
+                color: "#A69A85",
+                fontFamily: "var(--font-mono)",
+                fontSize: "11px",
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                fontWeight: 500,
+              }}
+              className="block"
+            >
+              MERCHANT / ENTERPRISE ENTITY ID
+            </label>
+            <input
+              type="text"
+              value={merchantId}
+              onChange={(e) => setMerchantId(e.target.value)}
+              style={{
+                backgroundColor: "#15120E",
+                border: "1px solid rgba(180, 135, 90, 0.3)",
+                color: "#EDE6D6",
+                borderRadius: "8px",
+                fontFamily: "var(--font-mono)",
+                padding: "0.75rem 1rem",
+              }}
+              className="w-full text-sm placeholder:text-[#A69A85] focus:border-[#B4875A] focus:outline-none transition-all"
+              placeholder="e.g. MER-001"
+            />
+          </div>
+
+          {/* Bank CSV File Input */}
+          <FileInput
+            label="BANK STATEMENT CSV"
+            hint="txn_id, txn_date, amount, direction, narration, channel, reference_number"
+            onChange={setBankFile}
+            accept=".csv"
           />
-        </div>
 
-        {/* Bank CSV File Input */}
-        <FileInput
-          label="Bank Statement CSV"
-          hint="txn_id, txn_date, amount, direction, narration, channel, reference_number"
-          onChange={setBankFile}
-          accept=".csv"
-        />
+          {/* Invoice CSV File Input */}
+          <FileInput
+            label="INVOICE REGISTER CSV"
+            hint="invoice_id, invoice_date, counterparty_name, base_amount, total_amount, tds_section, tds_amount"
+            onChange={setInvFile}
+            accept=".csv"
+          />
 
-        {/* Invoice CSV File Input */}
-        <FileInput
-          label="Invoice Register CSV"
-          hint="invoice_id, invoice_date, counterparty_name, base_amount, total_amount, tds_section, tds_amount"
-          onChange={setInvFile}
-          accept=".csv"
-        />
+          {error && (
+            <div className="p-4 rounded-lg bg-[#251E16] border border-[#A34C3F]/50 text-[#EDE6D6] text-xs font-mono flex items-center gap-2.5">
+              <AlertCircle className="w-4 h-4 text-[#A34C3F] shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
 
-        {error && (
-          <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-mono flex items-center gap-2.5">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{error}</span>
+          {/* Submit Button */}
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              backgroundColor: "#2E4A38",
+              color: "#EDE6D6",
+              border: "1px solid rgba(180, 135, 90, 0.35)",
+              boxShadow: "0 0 0 1px rgba(46,74,56,0.4), 0 4px 24px -8px rgba(46,74,56,0.5)",
+              borderRadius: "9999px",
+              fontFamily: "var(--font-mono)",
+              letterSpacing: "0.12em",
+            }}
+            className="w-full py-4 text-xs font-semibold uppercase flex items-center justify-center gap-2.5 hover:bg-[#375743] hover:border-[#B4875A] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all duration-200"
+          >
+            {loading ? (
+              <span className="flex items-center gap-2">
+                <span className="w-4 h-4 rounded-full border-2 border-[#EDE6D6] border-t-transparent animate-spin" />
+                <span>Ingesting CSV &amp; Initializing Kuhn-Munkres Matrix…</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <span>Execute 5-Pass Autonomous Pipeline</span>
+                <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+              </span>
+            )}
+          </button>
+        </form>
+
+        {/* Parse errors banner */}
+        {parseErrors.length > 0 && (
+          <div className="bg-[#1D1812] border border-[#C79A45]/40 rounded-2xl p-6 space-y-3 font-mono">
+            <div className="flex items-center gap-2 text-[#C79A45] text-sm font-bold">
+              <AlertCircle className="w-4 h-4" />
+              <span>{parseErrors.length} rows flagged with parsing anomalies</span>
+            </div>
+            <div className="max-h-40 overflow-y-auto space-y-1 bg-[#15120E] rounded-lg p-3.5 border border-[rgba(180,135,90,0.2)] text-[11px] text-[#A69A85]">
+              {parseErrors.slice(0, 20).map((e, i) => (
+                <div key={i}>{JSON.stringify(e.errors)}</div>
+              ))}
+            </div>
           </div>
         )}
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full btn-primary py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-        >
-          {loading ? (
-            <span className="flex items-center gap-2">
-              <span className="w-4 h-4 rounded-full border-2 border-slate-900 border-t-transparent animate-spin" />
-              <span>Ingesting CSV & Initializing 5-Pass Pipeline…</span>
-            </span>
-          ) : (
-            <span className="flex items-center gap-2">
-              <span>Execute 5-Pass AI Pipeline</span>
-              <ArrowRight className="w-4 h-4" />
-            </span>
-          )}
-        </button>
-      </form>
-
-      {/* Parse errors banner */}
-      {parseErrors.length > 0 && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-6 space-y-3 font-mono">
-          <div className="flex items-center gap-2 text-amber-300 text-sm font-bold">
-            <AlertCircle className="w-4 h-4" />
-            <span>{parseErrors.length} rows flagged with parsing anomalies</span>
-          </div>
-          <div className="max-h-40 overflow-y-auto space-y-1 bg-slate-950 rounded-xl p-3.5 border border-white/5 text-[11px] text-amber-200/80">
-            {parseErrors.slice(0, 20).map((e, i) => (
-              <div key={i}>{JSON.stringify(e.errors)}</div>
-            ))}
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -146,26 +191,62 @@ function FileInput({
   const [name, setName] = useState<string | null>(null);
 
   return (
-    <div className="space-y-2">
-      <label className="block text-xs font-mono uppercase tracking-wider text-slate-300 font-semibold">{label}</label>
+    <div className="space-y-2.5">
+      <label
+        style={{
+          color: "#A69A85",
+          fontFamily: "var(--font-mono)",
+          fontSize: "11px",
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          fontWeight: 500,
+        }}
+        className="block"
+      >
+        {label}
+      </label>
       <label className="block cursor-pointer group">
         <div
-          className={`border-2 border-dashed rounded-xl px-5 py-6 text-center transition-all ${
-            name
-              ? "border-emerald-500 bg-emerald-950/30"
-              : "border-[var(--border)] hover:border-emerald-500/50 bg-[var(--bg)] hover:bg-[var(--bg-surface-elevated)]"
-          }`}
+          style={{
+            backgroundColor: name ? "rgba(46, 74, 56, 0.2)" : "#1D1812",
+            border: name
+              ? "1px solid rgba(60, 107, 76, 0.6)"
+              : "1px dashed rgba(180, 135, 90, 0.4)",
+            borderRadius: "10px",
+            padding: "1.5rem 1.25rem",
+          }}
+          className="text-center transition-all group-hover:border-[#B4875A]"
         >
           {name ? (
-            <div className="flex items-center justify-center gap-2 text-emerald-400 text-sm font-medium">
-              <CheckCircle2 className="w-5 h-5" />
-              <span className="font-mono text-xs">{name}</span>
+            <div className="flex items-center justify-center gap-2 text-[#EDE6D6] text-sm font-medium">
+              <CheckCircle2 className="w-5 h-5 text-[#3C6B4C]" />
+              <span className="font-mono text-xs font-bold text-[#EDE6D6]">{name}</span>
             </div>
           ) : (
             <div className="space-y-1.5">
-              <UploadCloud className="w-7 h-7 mx-auto text-slate-400 group-hover:text-emerald-400 transition-colors" />
-              <p className="text-xs text-slate-300 font-medium">Click to select or drag & drop CSV</p>
-              <p className="text-[11px] text-slate-500 font-mono">{hint}</p>
+              <UploadCloud
+                style={{ color: "#B4875A" }}
+                className="w-7 h-7 mx-auto transition-transform group-hover:scale-110"
+              />
+              <p
+                style={{
+                  color: "#EDE6D6",
+                  fontWeight: 500,
+                  fontSize: "13px",
+                }}
+                className="font-body"
+              >
+                Click to select or drag &amp; drop CSV file
+              </p>
+              <p
+                style={{
+                  color: "#A69A85",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "11px",
+                }}
+              >
+                {hint}
+              </p>
             </div>
           )}
         </div>
