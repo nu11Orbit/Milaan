@@ -40,6 +40,9 @@ from typing import Dict, List, Optional, Set, Tuple
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from app.core.config import get_settings
+from app.models.match import MatchLineItem
+
 log = logging.getLogger(__name__)
 
 # Minimum score to consider an assignment viable (below this, dummy/unmatched is preferred)
@@ -184,6 +187,18 @@ def apply_hungarian_to_batch(
         if tid in one_to_one_txns:
             candidate_invoices_set.add(iid)
 
+    # Collect invoices already claimed by split or batch matches
+    consumed_invoices_set: Set[str] = set()
+    for item in pending_matches:
+        match, top, cr, llm_prov, llm_raw, txn_view = item
+        if match.match_type in ("split_many_to_one", "batch_one_to_many"):
+            for li in match.line_items:
+                if li.invoice_id:
+                    consumed_invoices_set.add(li.invoice_id)
+
+    # Invoices claimed by multi-record matches must NOT be reassigned to 1:1 txns
+    candidate_invoices_set = candidate_invoices_set - consumed_invoices_set
+
     invoice_ids = sorted(list(candidate_invoices_set))
 
     if not one_to_one_txns or not invoice_ids:
@@ -230,9 +245,10 @@ def apply_hungarian_to_batch(
                 )
             ]
             match.confidence_score = opt.score
-            if opt.score >= 85.0:
+            settings = get_settings()
+            if opt.score >= settings.threshold_auto_accept:
                 match.confidence_band = "auto_accept"
-            elif opt.score >= 60.0:
+            elif opt.score >= settings.threshold_review:
                 match.confidence_band = "review"
             else:
                 match.confidence_band = "reject"
@@ -250,20 +266,50 @@ def apply_hungarian_to_batch(
             ))
             updated_matches.append((match, top, cr, llm_prov, llm_raw, txn_view))
         else:
-            # Demoted to exception (another txn won this invoice with higher global utility)
+            # Demoted: another txn won this invoice at higher global utility.
+            # Preserve the original score and apply the SAME confidence-band
+            # thresholds used everywhere else in the system — don't invent a
+            # separate rule just because this came from the demotion path.
+            settings = get_settings()
+            review_threshold = settings.threshold_review
             log.info(
                 f"Hungarian optimal resolution: {tid} invoice {greedy_inv} claimed by higher-utility match"
             )
-            match.confidence_band = "review"
+
+            if match.confidence_score < review_threshold:
+                match.match_type = "exception"
+                match.confidence_band = "reject"
+                match.exception_reason_category = "no_viable_candidate"
+                match.line_items = [
+                    MatchLineItem(
+                        txn_id=tid,
+                        allocated_amount=txn_view.amount,
+                        invoice_id=None,
+                    )
+                ]
+            else:
+                # Genuinely competitive candidate that lost a close global contest —
+                # keep it visible in review WITH its contested invoice reference
+                # intact, so a human reviewer can see exactly what it was competing
+                # against. Do not clear line_items in this branch.
+                match.confidence_band = "review"
+                match.exception_reason_category = "lost_global_assignment"
+
             match.explanation_text = (
-                f"Candidate invoice {greedy_inv} assigned to higher-confidence match by global optimizer. "
-                "Escalated to human review."
+                f"Candidate invoice {greedy_inv} scored {match.confidence_score:.1f}, "
+                f"but was assigned to a higher-confidence match elsewhere in this batch. "
+                + ("No other viable candidate exists for this transaction."
+                   if match.confidence_band == "reject"
+                   else "This remains a plausible candidate pending human review.")
             )[:280]
+
             audit_entries.append((
                 match.match_id,
                 "hungarian_reassignment",
                 f"Candidate {greedy_inv} allocated to higher global utility match. "
-                f"Match for {tid} escalated to review.",
+                + (f"Match for {tid} closed as exception (score {match.confidence_score:.1f} < {review_threshold})."
+                   if match.confidence_band == "reject"
+                   else f"Match for {tid} escalated to review (score {match.confidence_score:.1f} >= {review_threshold})."),
             ))
             updated_matches.append((match, top, cr, llm_prov, llm_raw, txn_view))
 

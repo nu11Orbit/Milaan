@@ -30,9 +30,9 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     groq_api_key: str = ""
 
-    # Gemini model to use (Flash-Lite is higher-throughput on free tier)
-    gemini_model: str = "gemini-2.5-flash-lite"
-    groq_model: str = "llama-3.3-70b-versatile"
+    # Gemini model to use
+    gemini_model: str = "gemini-3.6-flash"
+    groq_model: str = "groq/compound-mini"
 
     # ── LLM router resilience ─────────────────────────────────────────────────
     llm_timeout_seconds: int = 8
@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     embedding_top_k: int = 5
 
     # Pass 4 split matcher: max candidate pool before flagging for LLM
-    split_pool_max_size: int = 8
+    split_pool_max_size: int = 16
 
     # Gateway fee rate (Razorpay-style 2% + 18% GST on fee)
     gateway_fee_rate: float = 0.02
