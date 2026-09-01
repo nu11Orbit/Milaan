@@ -56,7 +56,7 @@ async def call(
                         {"role": "user",   "content": user_message},
                     ],
                     temperature=0.1,
-                    max_tokens=512,
+                    max_tokens=1024,
                     response_format={"type": "json_object"},
                 ),
             ),
