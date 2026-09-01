@@ -31,7 +31,11 @@ from app.engine.schemas import CandidateMatch, InvoiceView, TxnView
 from app.core.config import get_settings
 
 # ── Pass 1 resolution threshold (score ≥ this → skip passes 2-4) ─────────────
-PASS1_RESOLVE_THRESHOLD = 70.0
+# Set at 55 rather than 70: the original 70 assumed UTR/reference matches (+40)
+# would always fire. Many real invoices have no reference_number so Rule 1 gives
+# 0 pts. For those, a clean amount_exact(+30) + date≤7d(+15) + name_token(+10)
+# = 55 is an unambiguous match that should resolve here without needing Pass 2-4.
+PASS1_RESOLVE_THRESHOLD = 55.0
 
 
 # ── Helper: reference number comparison ──────────────────────────────────────
@@ -74,16 +78,17 @@ def _amount_close(a: Decimal, b: Decimal, tolerance: Decimal) -> bool:
 # ── Rule functions ─────────────────────────────────────────────────────────────
 
 def rule1_utr_exact(candidate: CandidateMatch, txn: TxnView, inv: InvoiceView) -> None:
-    """Rule 1: Reference / UTR number match (+40 pts for exact, +20 for prefix)."""
+    """Rule 1: Reference / UTR number match or direct invoice ID in narration."""
     matched, reason = _refs_match(txn.reference_number, inv.reference_number)
     if matched:
-        # Distinguish exact vs prefix
         is_exact = (
             txn.reference_number and inv.reference_number and
             txn.reference_number.strip().upper() == inv.reference_number.strip().upper()
         )
         delta = 40.0 if is_exact else 20.0
         candidate.add("pass1_utr", delta, reason)
+    elif inv.invoice_id and inv.invoice_id.strip() and inv.invoice_id.upper() in (txn.narration or "").upper():
+        candidate.add("pass1_utr", 35.0, f"Invoice ID '{inv.invoice_id}' explicitly found in bank narration")
     else:
         candidate.add("pass1_utr", 0.0, "No UTR/reference signal", fired=False)
 
@@ -105,7 +110,7 @@ def rule2_amount_exact(
     tol = Decimal(str(settings.amount_tolerance_rupees))
 
     if _amount_close(txn.amount, inv.expected_net_amount, tol):
-        delta = 30.0
+        delta = 45.0
         reason = (
             f"Amount exact match: txn ₹{txn.amount} ≈ expected_net ₹{inv.expected_net_amount} "
             f"(within ₹{tol})"
@@ -113,7 +118,7 @@ def rule2_amount_exact(
         candidate.add("pass1_amount_exact", delta, reason)
     elif _amount_close(txn.amount, inv.total_amount, tol):
         # Payer sent gross amount (didn't deduct TDS) — still a strong signal
-        delta = 22.0
+        delta = 35.0
         reason = (
             f"Amount matches gross total: txn ₹{txn.amount} ≈ total ₹{inv.total_amount} "
             f"(TDS possibly handled separately)"
@@ -175,13 +180,16 @@ def rule4_date_proximity(
 ) -> None:
     """
     Rule 4: Date proximity (smaller gap → higher points).
-    ≤7 days  → +15 pts (normal payment cycle)
+    ≤3 days   → +20 pts (immediate payment)
+    4-7 days  → +15 pts (standard payment cycle)
     8-30 days → +10 pts
     31-60 days → +5 pts (date lag outlier case 11)
     > 60 days  → +0 pts (suspicious — but not eliminated here)
     """
     delta_days = abs((txn.txn_date - inv.invoice_date).days)
-    if delta_days <= 7:
+    if delta_days <= 3:
+        candidate.add("pass1_date", 20.0, f"Payment within 3 days of invoice ({delta_days}d)")
+    elif delta_days <= 7:
         candidate.add("pass1_date", 15.0, f"Payment within 7 days of invoice ({delta_days}d)")
     elif delta_days <= 30:
         candidate.add("pass1_date", 10.0, f"Payment within 30 days of invoice ({delta_days}d)")
@@ -198,19 +206,27 @@ def rule5_counterparty_basic(
 ) -> None:
     """
     Rule 5: Basic counterparty name signal.
-    Checks if ANY token from the invoice counterparty name appears in the narration.
-    This is intentionally loose — Pass 2 (rapidfuzz) handles the proper fuzzy match.
+    Checks if full counterparty name or any meaningful token appears in the narration.
     """
-    narration_upper = txn.narration.upper()
+    narration_upper = (txn.narration or "").upper()
+    cp_upper = (inv.counterparty_name or "").strip().upper()
+
+    if cp_upper and cp_upper in narration_upper:
+        candidate.add(
+            "pass1_name_exact", 35.0,
+            f"Full counterparty name '{cp_upper}' found in narration",
+        )
+        return
+
     name_tokens = [
-        t for t in inv.counterparty_name.upper().split()
+        t for t in cp_upper.split()
         if len(t) >= 4 and t not in {"PRIVATE", "LIMITED", "PVT", "LTD", "SERVICES",
-                                      "SOLUTIONS", "ENTERPRISES", "TRADING"}
+                                      "SOLUTIONS", "ENTERPRISES", "TRADING", "GROUP", "ASSOCIATES", "SUPPLIERS"}
     ]
     for token in name_tokens:
-        if token[:4] in narration_upper:   # first 4 chars of each meaningful word
+        if token in narration_upper or token[:4] in narration_upper:
             candidate.add(
-                "pass1_name_token", 10.0,
+                "pass1_name_token", 15.0,
                 f"Counterparty token '{token[:4]}' found in narration",
             )
             return
@@ -262,10 +278,15 @@ def run_pass1(
     # Sort: highest score first
     results.sort(key=lambda c: c.score, reverse=True)
 
-    # Tag the top candidate if it cleared the threshold
+    # Tag the top candidate if it cleared the threshold AND has an amount signal
     if results and results[0].score >= PASS1_RESOLVE_THRESHOLD:
-        results[0].resolved_by = "pass1_rules"
-        results[0].match_type = "one_to_one"
+        amount_matched = any(
+            c.source in ("pass1_amount_exact", "pass1_amount_gross", "pass1_tds_adjusted", "pass1_gateway_fee") and c.rule_fired
+            for c in results[0].contributions
+        )
+        if amount_matched:
+            results[0].resolved_by = "pass1_rules"
+            results[0].match_type = "one_to_one"
 
     return results
 
