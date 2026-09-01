@@ -273,11 +273,11 @@ class TestMatching:
     """Subset-sum pool cap, counterparty floor, double-spend, paise arithmetic."""
 
     def test_split_pool_too_large_flagged_for_llm(self):
-        """Pool > 8 txns → flagged_for_llm=True, never attempted."""
+        """Pool > 16 txns → flagged_for_llm=True, never attempted."""
         from app.engine.pass4_split_matcher import run_pass4_split
         inv = make_inv(expected_net=Decimal("50000"))
-        # 9 txns (> max pool of 8)
-        txns = [make_txn(f"TXN-{i}", Decimal("5000"), days=i+1) for i in range(9)]
+        # 17 txns (> max pool of 16)
+        txns = [make_txn(f"TXN-{i}", Decimal("5000"), days=i+1) for i in range(17)]
         result = run_pass4_split(inv, txns)
         assert result.flagged_for_llm
         assert result.match_type == "flagged_for_llm"
