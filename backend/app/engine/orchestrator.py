@@ -94,10 +94,14 @@ def _txn_to_view(txn) -> TxnView:
 
 # ── Noise / pre-pass filter ────────────────────────────────────────────────────
 
-_NOISE_THRESHOLD_RUPEES = Decimal("10")  # txns below ₹10 → noise bucket
+_NOISE_THRESHOLD_RUPEES = Decimal("100")  # txns below ₹100 or bank interest → noise bucket
 
 def _is_noise(txn: TxnView) -> bool:
-    return txn.amount < _NOISE_THRESHOLD_RUPEES
+    if txn.amount <= Decimal("10"):
+        return True
+    if "INTEREST" in (txn.narration or "").upper() and txn.amount < _NOISE_THRESHOLD_RUPEES:
+        return True
+    return False
 
 
 # ── Audit log helper ──────────────────────────────────────────────────────────
@@ -151,6 +155,7 @@ async def _match_one_txn(
     router: LLMRouter,
     settings,
     claimed_invoices: Set[str],
+    claimed_txns: Optional[Set[str]] = None,
     fs_model: Optional[FSModel] = None,
     candidate_scores_collector: Optional[Dict[Tuple[str, str], float]] = None,
 ) -> Optional[Match]:
@@ -159,13 +164,34 @@ async def _match_one_txn(
     Returns a Match Beanie document (not yet inserted — caller inserts after
     bipartite assignment to avoid claiming invoices that get taken by higher-confidence matches).
     """
-    # ── Pre-pass: noise filter ─────────────────────────────────────────────────
-    if _is_noise(txn_view):
+    if claimed_txns is None:
+        claimed_txns = set()
+
+    # ── Pre-pass: debit / refund ──────────────────────────────────────────────
+    if txn_view.direction == "debit":
         match_id = f"MATCH-{uuid.uuid4().hex[:12]}"
+        exp = f"Debit transaction with no corresponding open invoice to reverse against ({txn_view.narration})"
         return Match(
             match_id=match_id, batch_id=batch_id, run_id=run_id,
             match_type="exception", confidence_score=0.0, confidence_band="reject",
             line_items=[MatchLineItem(txn_id=txn_view.txn_id, allocated_amount=txn_view.amount)],
+            explanation_text=exp[:280],
+            explanation_source="rules_engine",
+            exception_reason_category="debit_transaction",
+            exception_reason_detail=f"Debit/Refund transaction ({txn_view.narration}) requires manual handling",
+            threshold_snapshot={},
+        )
+
+    # ── Pre-pass: noise filter ─────────────────────────────────────────────────
+    if _is_noise(txn_view):
+        match_id = f"MATCH-{uuid.uuid4().hex[:12]}"
+        exp = f"Noise transaction below threshold floor: amount ₹{txn_view.amount} ({txn_view.narration})"
+        return Match(
+            match_id=match_id, batch_id=batch_id, run_id=run_id,
+            match_type="exception", confidence_score=0.0, confidence_band="reject",
+            line_items=[MatchLineItem(txn_id=txn_view.txn_id, allocated_amount=txn_view.amount)],
+            explanation_text=exp[:280],
+            explanation_source="rules_engine",
             exception_reason_category="noise_below_floor",
             exception_reason_detail=f"Txn amount ₹{txn_view.amount} below noise threshold ₹{_NOISE_THRESHOLD_RUPEES}",
             threshold_snapshot={},
@@ -175,25 +201,32 @@ async def _match_one_txn(
     dup_of = detect_duplicate_txn(txn_view, all_txn_views)
     if dup_of:
         match_id = f"MATCH-{uuid.uuid4().hex[:12]}"
+        exp = f"Duplicate transaction detected: likely duplicate of {dup_of} (same amount ₹{txn_view.amount} within 3 days)"
         return Match(
             match_id=match_id, batch_id=batch_id, run_id=run_id,
             match_type="exception", confidence_score=0.0, confidence_band="reject",
             line_items=[MatchLineItem(txn_id=txn_view.txn_id, allocated_amount=txn_view.amount)],
+            explanation_text=exp[:280],
+            explanation_source="rules_engine",
             exception_reason_category="duplicate_detected",
             exception_reason_detail=f"Likely duplicate of {dup_of} — same amount, narration, within 3 days",
             threshold_snapshot={},
         )
 
     # ── Narrow candidates ──────────────────────────────────────────────────────
-    available_invs = [iv for iv in inv_views if iv.invoice_id not in claimed_invoices]
-    narrow = candidate_filter.narrow(txn_view, available_invs, settings)
+    narrow = candidate_filter.narrow_candidates(txn_view, inv_views, settings)
+    # Exclude already claimed invoices
+    narrow = [iv for iv in narrow if iv.invoice_id not in claimed_invoices]
 
     if not narrow:
         match_id = f"MATCH-{uuid.uuid4().hex[:12]}"
+        exp = f"No invoice candidate found within date/amount window for this counterparty ({txn_view.narration})"
         return Match(
             match_id=match_id, batch_id=batch_id, run_id=run_id,
             match_type="exception", confidence_score=0.0, confidence_band="reject",
             line_items=[MatchLineItem(txn_id=txn_view.txn_id, allocated_amount=txn_view.amount)],
+            explanation_text=exp[:280],
+            explanation_source="rules_engine",
             exception_reason_category="no_candidate_found",
             exception_reason_detail="No open invoice within date window / amount range for this merchant",
             threshold_snapshot={},
@@ -217,19 +250,40 @@ async def _match_one_txn(
     # ── Pass 4 (split/batch) if still unresolved ──────────────────────────────
     split_result: Optional[SplitMatchResult] = None
     if top is None or top.resolved_by is None:
-        # Try split: many txns → this invoice candidate
-        if top:
-            split_result = run_pass4_split(
-                inv_map.get(top.invoice_id),
-                [t for t in all_txn_views if t.txn_id != txn_view.txn_id
-                 and t.txn_id not in claimed_invoices],
-                settings,
-            )
-        # Try batch: this txn → many invoices
-        if split_result is None or split_result.match_type == "no_match":
-            batch_result = run_pass4_batch(txn_view, narrow, settings)
-            if batch_result.match_type not in ("no_match", "flagged_for_llm"):
+        # 1. Try batch payout: this txn → many invoices (e.g. TXN-007 ₹120k → INV-006 + INV-007)
+        batch_result = run_pass4_batch(txn_view, narrow, settings)
+        if batch_result.match_type == "batch_one_to_many":
+            split_result = batch_result
+
+        # 2. Try split settlement: many txns → one candidate invoice (e.g. TXN-004 + TXN-005 → INV-004)
+        if split_result is None:
+            split_pool = [t for t in all_txn_views if t.txn_id not in claimed_txns and t.direction == "credit"]
+            partial_candidate = None
+            for cand_inv in narrow:
+                sr = run_pass4_split(inv_map.get(cand_inv.invoice_id), split_pool, settings)
+                if sr.match_type == "split_many_to_one" and txn_view.txn_id in sr.txn_ids:
+                    split_result = sr
+                    break
+                elif sr.match_type == "partial" and partial_candidate is None:
+                    partial_candidate = sr
+                elif sr.match_type == "flagged_for_llm" and partial_candidate is None:
+                    partial_candidate = sr
+
+            if split_result is None and partial_candidate is not None:
+                split_result = partial_candidate
+            elif split_result is None and batch_result.match_type == "flagged_for_llm":
                 split_result = batch_result
+
+    if split_result and split_result.match_type in ("split_many_to_one", "batch_one_to_many", "partial"):
+        if top is None:
+            primary_inv = split_result.invoice_ids[0] if split_result.invoice_ids else ""
+            top = CandidateMatch(invoice_id=primary_inv, txn_id=txn_view.txn_id)
+        elif split_result.invoice_ids and top.invoice_id not in split_result.invoice_ids:
+            top.invoice_id = split_result.invoice_ids[0]
+
+        top.add("pass4_split_matcher", split_result.confidence_delta, split_result.explanation)
+        top.resolved_by = "pass4_split_matcher"
+        top.match_type = split_result.match_type
 
     # ── Near-duplicate escalation (Case 8) ───────────────────────────────────
     force_review = False
@@ -260,10 +314,13 @@ async def _match_one_txn(
     else:
         # No candidate at all even after Pass 4
         match_id = f"MATCH-{uuid.uuid4().hex[:12]}"
+        exp = f"No viable invoice candidate found within date/amount window for {txn_view.txn_id} ({txn_view.narration})"
         return Match(
             match_id=match_id, batch_id=batch_id, run_id=run_id,
             match_type="exception", confidence_score=0.0, confidence_band="reject",
             line_items=[MatchLineItem(txn_id=txn_view.txn_id, allocated_amount=txn_view.amount)],
+            explanation_text=exp[:280],
+            explanation_source="rules_engine",
             exception_reason_category="no_candidate_found",
             exception_reason_detail="All passes exhausted — no match candidate found",
             threshold_snapshot={},
@@ -292,17 +349,33 @@ async def _match_one_txn(
 
     if split_result and split_result.match_type in ("split_many_to_one", "batch_one_to_many", "partial"):
         mtype = split_result.match_type
-        line_items = [
-            MatchLineItem(
-                txn_id=tid if mtype == "split_many_to_one" else txn_view.txn_id,
-                invoice_id=top.invoice_id if mtype == "split_many_to_one" else iid,
-                allocated_amount=split_result.allocated_amounts.get(
-                    tid if mtype == "split_many_to_one" else iid, txn_view.amount
-                ),
-            )
-            for tid in (split_result.txn_ids or [txn_view.txn_id])
-            for iid in (split_result.invoice_ids or [top.invoice_id])
-        ]
+        if mtype == "batch_one_to_many":
+            line_items = [
+                MatchLineItem(
+                    txn_id=txn_view.txn_id,
+                    invoice_id=iid,
+                    allocated_amount=split_result.allocated_amounts.get(iid, Decimal("0")),
+                )
+                for iid in split_result.invoice_ids
+            ]
+        elif mtype == "split_many_to_one":
+            target_inv = split_result.invoice_ids[0] if split_result.invoice_ids else top.invoice_id
+            line_items = [
+                MatchLineItem(
+                    txn_id=tid,
+                    invoice_id=target_inv,
+                    allocated_amount=split_result.allocated_amounts.get(tid, Decimal("0")),
+                )
+                for tid in split_result.txn_ids
+            ]
+        else:
+            line_items = [
+                MatchLineItem(
+                    txn_id=txn_view.txn_id,
+                    invoice_id=top.invoice_id,
+                    allocated_amount=split_result.allocated_amounts.get(txn_view.txn_id, txn_view.amount),
+                )
+            ]
         explanation = split_result.explanation
     else:
         mtype = top.match_type or "one_to_one"
@@ -313,13 +386,26 @@ async def _match_one_txn(
         )]
         explanation = cr.explanation
 
-    exp_source = (
-        "llm" if llm_provider in ("gemini", "groq")
-        else top.resolved_by.replace("pass1_", "rules_engine")
-                             .replace("pass2_", "fuzzy")
-                             .replace("pass3_", "embedding")
-        if top and top.resolved_by else "none"
-    )
+    if not explanation:
+        if mtype == "exception":
+            explanation = f"No viable invoice candidate found for {txn_view.txn_id} (score {cr.final_score:.1f})."
+        else:
+            explanation = f"Match decision for {txn_view.txn_id} with score {cr.final_score:.1f} ({cr.decision})."
+
+    _SOURCE_MAP = {
+        "pass1": "rules_engine",
+        "pass2": "fuzzy",
+        "pass3": "embedding",
+        "pass4": "embedding",   # split/batch matcher — closest semantic bucket
+        "pass5": "llm",
+    }
+    if llm_provider in ("gemini", "groq"):
+        exp_source = "llm"
+    elif top and top.resolved_by:
+        prefix = next((k for k in _SOURCE_MAP if top.resolved_by.startswith(k)), None)
+        exp_source = _SOURCE_MAP[prefix] if prefix else "none"
+    else:
+        exp_source = "none"
 
     match = Match(
         match_id=match_id, batch_id=batch_id, run_id=run_id,
@@ -399,18 +485,24 @@ async def run_reconciliation(
     # ── Sort txns: larger amounts first for greedy assignment ─────────────────
     txn_views.sort(key=lambda t: t.amount, reverse=True)
 
+    claimed_txns: Set[str] = set()
     claimed_invoices: Set[str] = set()
     pending_matches  = []   # (match_doc, top_candidate, conf_result, llm_provider, llm_raw, txn_view)
     all_candidate_scores: Dict[Tuple[str, str], float] = {}
 
-    total = len(txn_views)
+    total_txns = len(txn_views)
 
     for idx, txn_view in enumerate(txn_views):
-        log.info(f"[{idx+1}/{total}] Processing {txn_view.txn_id} ₹{txn_view.amount}")
+        if txn_view.txn_id in claimed_txns:
+            log.info(f"Skipping {txn_view.txn_id} — already resolved in multi-transaction split match")
+            continue
+
+        log.info(f"[{idx+1}/{total_txns}] Processing {txn_view.txn_id} ₹{txn_view.amount}")
 
         result = await _match_one_txn(
             txn_view, inv_views, inv_map, txn_views,
             batch_id, run_id, router, settings, claimed_invoices,
+            claimed_txns=claimed_txns,
             fs_model=fs_model,
             candidate_scores_collector=all_candidate_scores,
         )
@@ -424,22 +516,12 @@ async def run_reconciliation(
 
         pending_matches.append((match, top, cr, llm_prov, llm_raw, txn_view))
 
-        # Provisional claim (greedy — bipartite pass will validate)
-        for li in match.line_items:
-            if li.invoice_id:
-                claimed_invoices.add(li.invoice_id)
-
-        # SSE event
-        if sse_queue:
-            event = {
-                "idx": idx + 1, "total": total,
-                "txn_id": txn_view.txn_id,
-                "amount": str(txn_view.amount),
-                "band": match.confidence_band,
-                "score": match.confidence_score,
-                "match_type": match.match_type,
-            }
-            await sse_queue.put(_sse_event(event))
+        # Multi-record matches (split/batch) claim their participating txns and invoices immediately
+        if match.match_type in ("split_many_to_one", "batch_one_to_many"):
+            for li in match.line_items:
+                claimed_txns.add(li.txn_id)
+                if li.invoice_id:
+                    claimed_invoices.add(li.invoice_id)
 
     # ── Hungarian Global Bipartite Optimization ──────────────────────────────
     pending_matches, hungarian_audits = apply_hungarian_to_batch(
@@ -448,10 +530,12 @@ async def run_reconciliation(
         inv_map=inv_map,
     )
 
-    # ── Persist matches + write audit logs ────────────────────────────────────
+    total_matches = len(pending_matches)
+
+    # ── Persist matches + write audit logs + stream SSE events ────────────────
     auto_accept_count = review_count = reject_count = 0
 
-    for match, top, cr, llm_prov, llm_raw, txn_view in pending_matches:
+    for m_idx, (match, top, cr, llm_prov, llm_raw, txn_view) in enumerate(pending_matches):
         await match.insert()
 
         if match.confidence_band == "auto_accept":
@@ -460,6 +544,30 @@ async def run_reconciliation(
             review_count += 1
         else:
             reject_count += 1
+
+        # SSE event per finalized match record
+        if sse_queue:
+            txns_in_match = sorted(list(set(li.txn_id for li in match.line_items if li.txn_id)))
+            txn_display = " + ".join(txns_in_match) if len(txns_in_match) > 1 else txn_view.txn_id
+            amount_display = str(sum(li.allocated_amount for li in match.line_items if li.allocated_amount)) if len(txns_in_match) > 1 else str(txn_view.amount)
+
+            invs_in_match: list[str] = []
+            for li in match.line_items:
+                if li.invoice_id and li.invoice_id not in invs_in_match:
+                    invs_in_match.append(li.invoice_id)
+
+            event = {
+                "idx": m_idx + 1,
+                "total": total_matches,
+                "txn_id": txn_display,
+                "amount": amount_display,
+                "band": match.confidence_band,
+                "score": match.confidence_score,
+                "match_type": match.match_type,
+                "invoices": invs_in_match,
+                "explanation": match.explanation_text or "",
+            }
+            await sse_queue.put(_sse_event(event))
 
         # Audit: engine passes
         if top and cr:
@@ -520,13 +628,13 @@ async def run_reconciliation(
             "auto_accept": auto_accept_count,
             "review": review_count,
             "exceptions": reject_count,
-            "total": total,
+            "total": total_matches,
         }))
 
     return {
         "batch_id":   batch_id,
         "run_id":     run_id,
-        "total":      total,
+        "total":      total_matches,
         "auto_accept": auto_accept_count,
         "review":      review_count,
         "exceptions":  reject_count,

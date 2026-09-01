@@ -28,8 +28,20 @@ from app.engine.schemas import InvoiceView, TxnView
 from app.core.config import get_settings
 
 
-def _amount_in_window(inv_amount: Decimal, txn_amount: Decimal, tolerance_pct: float = 0.30) -> bool:
-    """True if inv_amount is within ±tolerance_pct of txn_amount."""
+def _amount_in_window(inv_amount: Decimal, txn_amount: Decimal, tolerance_pct: float = 0.60) -> bool:
+    """
+    True if inv_amount is within ±tolerance_pct of txn_amount.
+
+    Why 60% (not the original 30%):
+      - Split payments: a ₹25k txn against a ₹50k invoice is 100% ratio — clearly
+        outside 30% but is a valid split candidate for Pass 4.
+      - Batch payouts: a ₹120k txn against ₹70k + ₹50k invoices requires both
+        ₹70k and ₹50k to pass through the filter before Pass 4 can sum them.
+      - TDS/GST drift: typically ≤10% but safe to be wide here since Pass 1-3
+        scoring will correctly rank candidates by actual amount similarity.
+      - 60% admits a 2× relationship (covers most split/batch scenarios) while
+        still excluding obviously unrelated invoices (e.g. ₹25k vs ₹80k = 220%).
+    """
     if txn_amount == 0:
         return False
     ratio = abs(inv_amount - txn_amount) / txn_amount
@@ -71,18 +83,25 @@ def narrow_candidates(
         if not (earliest <= inv.invoice_date <= latest):
             continue
 
-        # Filter 3: amount window
-        # For credits (money in), check against expected_net_amount.
-        # For debits (refunds), check against total_amount — could be reversed.
-        if txn.direction == "credit":
-            ref_amount = inv.expected_net_amount
-        else:
-            ref_amount = inv.total_amount
+        # Direct signal: if narration explicitly mentions this invoice ID or counterparty,
+        # always include as a candidate regardless of amount difference (critical for split/batch).
+        id_match = bool(inv.invoice_id and inv.invoice_id.strip() and inv.invoice_id.upper() in txn.narration.upper())
+        name_match = False
+        if inv.counterparty_name and len(inv.counterparty_name.strip()) >= 3:
+            name_clean = inv.counterparty_name.strip().upper()
+            if name_clean in txn.narration.upper() or any(
+                t in txn.narration.upper() for t in name_clean.split()
+                if len(t) >= 4 and t not in {"PRIVATE", "LIMITED", "PVT", "LTD", "SERVICES", "SOLUTIONS"}
+            ):
+                name_match = True
 
-        if not _amount_in_window(ref_amount, txn.amount):
-            # Also check total_amount for cases where TDS wasn't deducted by payer
-            if not _amount_in_window(inv.total_amount, txn.amount):
-                continue
+        if not (id_match or name_match):
+            ref_amount = inv.expected_net_amount if txn.direction == "credit" else inv.total_amount
+            # Amount window check: ratio up to 1.5 (covers 2x to 3x split & batch payments)
+            if not _amount_in_window(ref_amount, txn.amount, tolerance_pct=1.5):
+                if not _amount_in_window(inv.total_amount, txn.amount, tolerance_pct=1.5):
+                    if not _amount_in_window(txn.amount, ref_amount, tolerance_pct=1.5):
+                        continue
 
         candidates.append(inv)
 

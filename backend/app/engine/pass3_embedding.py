@@ -204,8 +204,13 @@ def run_pass3(
     scored.sort(key=lambda x: x[1], reverse=True)
     for cm, sim in scored[:top_k]:
         if cm.score >= PASS3_RESOLVE_THRESHOLD and cm.resolved_by is None:
-            cm.resolved_by = "pass3_embedding"
-            cm.match_type  = "one_to_one"
+            amount_matched = any(
+                c.source in ("pass1_amount_exact", "pass1_amount_gross", "pass1_tds_adjusted", "pass1_gateway_fee", "pass2_amount_fuzzy") and c.rule_fired
+                for c in cm.contributions
+            )
+            if amount_matched:
+                cm.resolved_by = "pass3_embedding"
+                cm.match_type  = "one_to_one"
 
     # Re-sort all candidates
     candidates.sort(key=lambda c: c.score, reverse=True)

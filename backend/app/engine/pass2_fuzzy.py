@@ -175,8 +175,13 @@ def run_pass2(
         signal_c_date(cm, txn, inv)
 
         if cm.score >= PASS2_RESOLVE_THRESHOLD:
-            cm.resolved_by = "pass2_fuzzy"
-            cm.match_type  = "one_to_one"
+            amount_matched = any(
+                c.source in ("pass1_amount_exact", "pass1_amount_gross", "pass1_tds_adjusted", "pass1_gateway_fee", "pass2_amount_fuzzy") and c.rule_fired
+                for c in cm.contributions
+            )
+            if amount_matched:
+                cm.resolved_by = "pass2_fuzzy"
+                cm.match_type  = "one_to_one"
 
     # Re-sort after score updates
     candidates.sort(key=lambda c: c.score, reverse=True)
