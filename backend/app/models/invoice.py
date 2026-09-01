@@ -9,11 +9,26 @@ from __future__ import annotations
 
 from decimal import Decimal
 from datetime import date
-from typing import Optional, Literal
+from typing import Optional, Literal, Annotated
 
 from beanie import Document
 from pymongo import IndexModel, TEXT, ASCENDING, DESCENDING
 from pydantic import Field, model_validator
+from pydantic.functional_validators import BeforeValidator
+
+
+def _coerce_decimal(v: object) -> object:
+    """Convert BSON Decimal128 to a plain Decimal before Pydantic validation."""
+    try:
+        from bson import Decimal128
+        if isinstance(v, Decimal128):
+            return Decimal(str(v))
+    except ImportError:
+        pass
+    return v
+
+
+PyDecimal = Annotated[Decimal, BeforeValidator(_coerce_decimal)]
 
 
 # Valid Indian GST slabs — used for formula-consistency checks in the engine
@@ -40,32 +55,32 @@ class Invoice(Document):
     invoice_date: date
     due_date: Optional[date] = None
 
-    # ── Amount breakdown (all stored as Decimal strings in Mongo via Pydantic) ──
-    base_amount: Decimal = Field(..., description="Pre-GST invoice amount in INR")
+    # ── Amount breakdown (all stored as Decimal128 in Mongo) ──────────────────
+    base_amount: PyDecimal = Field(..., description="Pre-GST invoice amount in INR")
 
     # GST components — exactly one of (cgst+sgst) OR igst will be non-zero
-    cgst_amount: Decimal = Field(default=Decimal("0"), description="Central GST (intrastate)")
-    sgst_amount: Decimal = Field(default=Decimal("0"), description="State GST (intrastate)")
-    igst_amount: Decimal = Field(default=Decimal("0"), description="Integrated GST (interstate)")
+    cgst_amount: PyDecimal = Field(default=Decimal("0"), description="Central GST (intrastate)")
+    sgst_amount: PyDecimal = Field(default=Decimal("0"), description="State GST (intrastate)")
+    igst_amount: PyDecimal = Field(default=Decimal("0"), description="Integrated GST (interstate)")
 
-    total_amount: Decimal = Field(..., description="base + cgst + sgst + igst")
+    total_amount: PyDecimal = Field(..., description="base + cgst + sgst + igst")
 
     # ── TDS (Tax Deducted at Source) ───────────────────────────────────────────
     tds_section: Optional[str] = Field(
         default=None,
         description="e.g. '194J' for professional services — see build plan Section 3.2",
     )
-    tds_rate: Optional[Decimal] = Field(
+    tds_rate: Optional[PyDecimal] = Field(
         default=None,
         description="TDS rate as a decimal fraction (e.g. 0.10 for 10%)",
     )
-    tds_amount: Optional[Decimal] = Field(
+    tds_amount: Optional[PyDecimal] = Field(
         default=None,
         description="Computed TDS deduction in INR",
     )
 
     # ── The key field the matching engine targets ──────────────────────────────
-    expected_net_amount: Decimal = Field(
+    expected_net_amount: PyDecimal = Field(
         ...,
         description=(
             "Amount the merchant should actually receive in bank: "

@@ -87,7 +87,9 @@ async def _run_in_background(batch_id: str, run_id: str, queue: asyncio.Queue):
     except Exception as e:
         log.exception(f"Reconciliation run {run_id} crashed: {e}")
         import json
-        await queue.put(f"data: {json.dumps({'error': str(e), 'done': True})}\n\n")
+        await queue.put(
+            f"data: {json.dumps({'error': True, 'error_message': str(e), 'done': True, 'auto_accept': 0, 'review': 0, 'exceptions': 0, 'total': 0})}\n\n"
+        )
     finally:
         # Sentinel to signal the SSE generator to close
         await queue.put(None)

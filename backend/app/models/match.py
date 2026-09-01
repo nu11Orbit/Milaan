@@ -14,11 +14,26 @@ from __future__ import annotations
 
 from decimal import Decimal
 from datetime import datetime
-from typing import Optional, Literal, List
+from typing import Optional, Literal, List, Annotated
 
 from beanie import Document
 from pymongo import IndexModel, ASCENDING, DESCENDING
 from pydantic import BaseModel, Field
+from pydantic.functional_validators import BeforeValidator
+
+
+def _coerce_decimal(v: object) -> object:
+    """Convert BSON Decimal128 to a plain Decimal before Pydantic validation."""
+    try:
+        from bson import Decimal128
+        if isinstance(v, Decimal128):
+            return Decimal(str(v))
+    except ImportError:
+        pass
+    return v
+
+
+PyDecimal = Annotated[Decimal, BeforeValidator(_coerce_decimal)]
 
 
 class MatchLineItem(BaseModel):
@@ -37,7 +52,7 @@ class MatchLineItem(BaseModel):
         default=None,
         description="Reference to BankTransaction.txn_id — null for unpaid invoice exceptions",
     )
-    allocated_amount: Decimal = Field(
+    allocated_amount: PyDecimal = Field(
         ...,
         description=(
             "How much of this txn/invoice is consumed by this match. "
