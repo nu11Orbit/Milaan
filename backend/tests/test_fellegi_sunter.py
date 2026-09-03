@@ -272,3 +272,52 @@ class TestFSModelMeta:
             assert "disagree_llr" in entry
             assert entry["agree_llr"] > 0
             assert entry["disagree_llr"] < 0
+
+    def test_exact_ref_and_amount_match_no_tds_scores_above_90(self):
+        """
+        An exact reference-number + exact-amount match with NO TDS section present
+        must score 90+, not fall into the 75-80 range.
+        Missing TDS evidence must be treated strictly neutrally.
+        """
+        from app.engine.schemas import TxnView, InvoiceView, CandidateMatch
+        from app.engine.confidence_scorer import score
+
+        model = FSModel()
+        txn = TxnView(
+            txn_id="TXN-CLEAN-01",
+            merchant_id="M1",
+            txn_date=date(2026, 8, 3),
+            amount=Decimal("50000"),
+            direction="credit",
+            channel="NEFT",
+            narration="NEFT payment KAPOOR LOGISTICS UTR20260800101 settled",
+            reference_number="UTR20260800101",
+        )
+        inv = InvoiceView(
+            invoice_id="INV-CLEAN-01",
+            merchant_id="M1",
+            counterparty_name="Kapoor Logistics",
+            invoice_date=date(2026, 8, 1),
+            base_amount=Decimal("50000"),
+            total_amount=Decimal("50000"),
+            expected_net_amount=Decimal("50000"),
+            reference_number="UTR20260800101",
+            status="open",
+            tds_amount=None,
+            tds_section=None,
+            cgst_amount=Decimal("0"),
+            sgst_amount=Decimal("0"),
+            igst_amount=Decimal("0"),
+        )
+
+        fs_score = model.compute_score(txn, inv)
+        assert fs_score >= 90.0, f"FS score {fs_score:.2f} is below 90 for clean match without TDS"
+
+        # Test end-to-end score with CandidateMatch
+        cand = CandidateMatch(invoice_id=inv.invoice_id, txn_id=txn.txn_id)
+        cand.add("pass1_rules", 90.0, "Exact amount + ref match")
+        cand.resolved_by = "pass1_rules"
+
+        cr = score(cand, fs_score=fs_score)
+        assert cr.final_score >= 90.0, f"Confidence score {cr.final_score:.2f} is below 90"
+        assert cr.band == "auto_accept", f"Band {cr.band} should be auto_accept"

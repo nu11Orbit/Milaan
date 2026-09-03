@@ -165,10 +165,15 @@ class FSModel:
         """
         Compute Fellegi-Sunter score from pre-built comparison signals.
 
+        Maps the cumulative log-likelihood ratio (LLR) to [0, 100] via a standard
+        logistic sigmoid function anchored at neutral LLR=0 -> 50.0.
+        Missing fields (agrees=None) contribute exactly 0 to LLR (MAR assumption)
+        and are therefore strictly neutral, without penalizing records with missing optional data.
+
         Parameters
         ----------
         signals : dict mapping field_name → True / False / None
-                  None = field missing (contributes 0 LLR, no penalty)
+                  None = field missing / not applicable (contributes 0 LLR, no penalty)
 
         Returns
         -------
@@ -179,11 +184,11 @@ class FSModel:
             for name, agrees in signals.items()
             if name in self._field_map
         )
-        denom = self._max_llr - self._min_llr
-        if denom <= 0:
-            return 50.0  # degenerate: all fields identical → neutral score
-        raw = (total_llr - self._min_llr) / denom * 100.0
-        return max(0.0, min(100.0, raw))
+        # Standard logistic conversion with scaling factor k=0.5
+        # LLR=0 -> 50.0; LLR=+6 (strong evidence) -> 95.3; LLR=+10 -> 99.3; LLR=-4 -> 11.9
+        k = 0.5
+        score_val = 100.0 / (1.0 + math.exp(-max(-20.0, min(20.0, k * total_llr))))
+        return round(score_val, 2)
 
     # ── Build signals from TxnView + InvoiceView ──────────────────────────────
 
@@ -226,8 +231,7 @@ class FSModel:
 
         # ── Amount: TDS-adjusted ──────────────────────────────────────────────
         if inv.tds_amount and inv.tds_amount > Decimal("0"):
-            tds_net = inv.base_amount - inv.tds_amount
-            signals["amount_tds"] = abs(txn.amount - tds_net) <= tol
+            signals["amount_tds"] = abs(txn.amount - inv.expected_net_amount) <= tol
         else:
             signals["amount_tds"] = None
 
@@ -238,17 +242,17 @@ class FSModel:
             + (inv.igst_amount or Decimal("0"))
         )
         if gst_extra > Decimal("0"):
-            gst_total = inv.base_amount + gst_extra
-            signals["amount_gst"] = abs(txn.amount - gst_total) <= tol
+            signals["amount_gst"] = abs(txn.amount - inv.total_amount) <= tol
         else:
             signals["amount_gst"] = None
 
-        # ── Counterparty name via fuzzy match ─────────────────────────────────
+        # ── Counterparty name via robust partial / token matching ─────────────
         try:
             from rapidfuzz import fuzz
-            narration = txn.narration or ""
-            cp_name   = inv.counterparty_name or ""
-            ratio = fuzz.WRatio(narration, cp_name)
+            narration = (txn.narration or "").upper()
+            cp_name   = (inv.counterparty_name or "").upper()
+            # partial_ratio captures counterparty name embedded in narration with prefixes
+            ratio = max(fuzz.partial_ratio(cp_name, narration), fuzz.token_set_ratio(cp_name, narration))
             signals["name_strong"] = ratio >= 85
             signals["name_weak"]   = ratio >= 60
         except Exception:

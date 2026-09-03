@@ -248,10 +248,27 @@ def apply_hungarian_to_batch(
             settings = get_settings()
             if opt.score >= settings.threshold_auto_accept:
                 match.confidence_band = "auto_accept"
+                match.match_type = "one_to_one"
+                match.exception_reason_category = None
             elif opt.score >= settings.threshold_review:
                 match.confidence_band = "review"
+                match.match_type = "one_to_one"
+                match.exception_reason_category = None
             else:
                 match.confidence_band = "reject"
+                match.match_type = "exception"
+                match.exception_reason_category = "low_confidence_match"
+                match.exception_reason_detail = (
+                    f"Globally optimal invoice {new_inv_id} scored {opt.score:.1f}, "
+                    f"below review threshold {settings.threshold_review}"
+                )
+                match.line_items = [
+                    MatchLineItem(
+                        txn_id=tid,
+                        allocated_amount=txn_view.amount,
+                        invoice_id=None,
+                    )
+                ]
 
             match.explanation_text = (
                 f"Globally optimal match via Hungarian algorithm with invoice {new_inv_id} "
