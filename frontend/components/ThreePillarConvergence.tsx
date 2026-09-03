@@ -17,7 +17,7 @@ const PILLARS = [
     id: "fuzzy",
     title: "Fuzzy + Semantic",
     subtitle: "Probabilistic Matching",
-    detail: "Fellegi-Sunter log-likelihood vectors, Cosine vector embeddings, and phonetic fuzzy vendor resolution.",
+    detail: "Fellegi-Sunter log-likelihood vectors, sentence-transformer embeddings (all-MiniLM-L6-v2), phonetic fuzzy resolution — ambiguous cases escalated to LLM adjudication.",
     image: "/editorial/pillar_fuzzy.jpg",
   },
   {
@@ -270,7 +270,7 @@ export default function ThreePillarConvergence() {
                   100% RECONCILED
                 </div>
                 <div className="font-mono text-[10px] text-[#B4875A] mt-0.5">
-                  Optimal Assignment Core
+                  LLM-Explained · Bounded Confidence
                 </div>
               </div>
             </div>

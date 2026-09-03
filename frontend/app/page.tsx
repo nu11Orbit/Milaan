@@ -9,6 +9,7 @@ import NumberedResultsGrid from "@/components/NumberedResultsGrid";
 import ThreePillarConvergence from "@/components/ThreePillarConvergence";
 import AnimatedStatCounters from "@/components/AnimatedStatCounters";
 import FooterSection from "@/components/FooterSection";
+import AIExplainabilitySection from "@/components/AIExplainabilitySection";
 
 const PRELOAD_ASSETS = [
   "/editorial/hero_bahi.jpg",
@@ -47,6 +48,9 @@ export default function HomePage() {
 
       {/* ── 06. SECTION 5: THREE-PILLAR CONVERGENCE ── */}
       <ThreePillarConvergence />
+
+      {/* ── 06. SECTION 5.5: AI ADJUDICATION LAYER ── */}
+      <AIExplainabilitySection />
 
       {/* ── 07. SECTION 6: ANIMATED STAT COUNTERS ── */}
       <AnimatedStatCounters />

@@ -34,11 +34,11 @@ const STATS: CounterItem[] = [
   },
   {
     id: "passes",
-    targetValue: 3,
+    targetValue: 5,
     decimals: 0,
     suffix: " Passes",
     label: "Algorithmic Pipeline",
-    sublabel: "Deterministic rules, Fellegi-Sunter scoring, Hungarian solver",
+    sublabel: "Rules · Fuzzy · Embeddings · Combinatorics · LLM Adjudication",
   },
   {
     id: "pending",

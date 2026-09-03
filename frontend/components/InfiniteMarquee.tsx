@@ -4,8 +4,8 @@ const PASSES = [
   { num: "01", name: "Deterministic Rule Matching", detail: "Exact UTR & PAN Netting" },
   { num: "02", name: "Fellegi-Sunter Probabilistic Linkage", detail: "Log-Likelihood Weight Vectors" },
   { num: "03", name: "Semantic & Phonetic Vendor Matching", detail: "Levenshtein & Embeddings" },
-  { num: "04", name: "Kuhn-Munkres Bipartite Assignment", detail: "O(n³) Minimal Cost Optimization" },
-  { num: "05", name: "Subset-Sum Combinatorial Split", detail: "Multi-Invoice Settlement" },
+  { num: "04", name: "Combinatorial Optimization", detail: "Hungarian Assignment & Subset-Sum" },
+  { num: "05", name: "LLM Adjudication", detail: "Gemini Flash-Lite → Groq Failover" },
 ];
 
 const DOMAIN_TAGS = [
@@ -17,6 +17,10 @@ const DOMAIN_TAGS = [
   "IMPS INSTANT LEDGER",
   "AS-9 REVENUE ACCRUAL",
   "SYNTHETIC BENCHMARK HARNESS",
+  "AI CONFIDENCE SCORING",
+  "GEMINI 2.5 FLASH-LITE",
+  "LLM EXPLAINABILITY",
+  "GROQ LLAMA 3.3 70B",
 ];
 
 export default function InfiniteMarquee() {

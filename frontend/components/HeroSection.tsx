@@ -13,7 +13,7 @@ interface HeroSectionProps {
 const PHRASES = [
   {
     text: "Reconciling",
-    subtext: "Probabilistic Fellegi-Sunter scoring over noisy synthetic bank transaction narrations",
+    subtext: "Probabilistic Fellegi-Sunter scoring + LLM adjudication over noisy synthetic bank transaction narrations",
     images: ["/editorial/hero_bahi.jpg", "/editorial/hero_rupee.jpg"],
   },
   {
@@ -27,8 +27,13 @@ const PHRASES = [
     images: ["/editorial/hero_desk.jpg", "/editorial/hero_bahi.jpg"],
   },
   {
+    text: "AI-Adjudicated",
+    subtext: "Gemini 2.5 Flash-Lite → Groq Llama 3.3 70B failover explains every ambiguous match in plain English with a bounded ±20 confidence delta",
+    images: ["/editorial/hero_settlement.jpg", "/editorial/hero_bahi.jpg"],
+  },
+  {
     text: "Explained",
-    subtext: "Verifiable mathematical confidence scores across 60–80 synthetic evaluation records",
+    subtext: "Verifiable confidence scores across 60–80 synthetic records — AI enhances explanation, deterministic code enforces the final decision",
     images: ["/editorial/hero_settlement.jpg", "/editorial/hero_vault.jpg"],
   },
 ];
@@ -276,11 +281,11 @@ export default function HeroSection({ isReady }: HeroSectionProps) {
         <div className="hero-entrance-badge inline-flex items-center gap-3 px-4 py-1.5 rounded-full bg-[#1D1812]/90 border border-[rgba(180,135,90,0.25)] backdrop-blur-sm shadow-[0_2px_12px_rgba(21,18,14,0.6)]">
           <span className="w-2 h-2 rounded-full bg-[#6E2B34] animate-pulse" />
           <span className="font-mono text-[11px] uppercase tracking-widest text-[#EDE6D6]">
-            Autonomous Reconciliation Prototype · Buildathon Edition
+            AI-Powered Reconciliation · Razorpay Buildathon Track 04
           </span>
         </div>
         <div className="hidden sm:flex items-center gap-3 font-mono text-xs text-[#A69A85]">
-          <span>SYNTHETIC TEST BENCH · 60–80 RECORDS</span>
+          <span>GEMINI · GROQ · SYNTHETIC TEST BENCH</span>
         </div>
       </div>
 
@@ -332,7 +337,7 @@ export default function HeroSection({ isReady }: HeroSectionProps) {
         <div className="flex items-center gap-2 font-mono text-xs text-[#A69A85]">
           <span className="text-[#B4875A] font-semibold">0{activeIdx + 1}</span>
           <span>/</span>
-          <span>04</span>
+          <span>05</span>
         </div>
 
         <div className="flex flex-col items-center gap-1.5 cursor-pointer text-[#EDE6D6] animate-bounce-slow">
@@ -343,7 +348,7 @@ export default function HeroSection({ isReady }: HeroSectionProps) {
         </div>
 
         <div className="font-mono text-xs text-[#A69A85] text-right">
-          BIPARTITE MATCHING MATRIX
+          AI-POWERED · BIPARTITE MATRIX
         </div>
       </div>
     </section>
