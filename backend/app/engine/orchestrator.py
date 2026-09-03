@@ -247,9 +247,9 @@ async def _match_one_txn(
 
     top = candidates[0] if candidates else None
 
-    # ── Pass 4 (split/batch) if still unresolved ──────────────────────────────
+    # ── Pass 4 (split/batch) if still unresolved by Pass 1 exact match ────────
     split_result: Optional[SplitMatchResult] = None
-    if top is None or top.resolved_by is None:
+    if top is None or top.resolved_by is None or top.resolved_by in ("pass2_fuzzy", "pass3_embedding"):
         # 1. Try batch payout: this txn → many invoices (e.g. TXN-007 ₹120k → INV-006 + INV-007)
         batch_result = run_pass4_batch(txn_view, narrow, settings)
         if batch_result.match_type == "batch_one_to_many":
@@ -264,7 +264,7 @@ async def _match_one_txn(
                 if sr.match_type == "split_many_to_one" and txn_view.txn_id in sr.txn_ids:
                     split_result = sr
                     break
-                elif sr.match_type == "partial" and partial_candidate is None:
+                elif sr.match_type == "partial" and partial_candidate is None and txn_view.txn_id in sr.txn_ids:
                     partial_candidate = sr
                 elif sr.match_type == "flagged_for_llm" and partial_candidate is None:
                     partial_candidate = sr
@@ -407,6 +407,10 @@ async def _match_one_txn(
     else:
         exp_source = "none"
 
+    exc_cat = top.exception_reason_category if (top and top.is_exception) else None
+    if cr.decision == "reject" and not exc_cat:
+        exc_cat = "low_confidence_match"
+
     match = Match(
         match_id=match_id, batch_id=batch_id, run_id=run_id,
         match_type=mtype,
@@ -416,7 +420,7 @@ async def _match_one_txn(
         explanation_source=exp_source,
         line_items=line_items,
         threshold_snapshot=cr.threshold_snapshot,
-        exception_reason_category=top.exception_reason_category if top.is_exception else None,
+        exception_reason_category=exc_cat,
         # Pending LLM enrichment: only when BOTH providers were rate-limited.
         # Not set for genuine insufficient_evidence — that's a content signal, not infra failure.
         pending_llm_enrichment=both_rate_limited,
@@ -483,7 +487,9 @@ async def run_reconciliation(
     inv_views = [_invoice_to_view(i) for i in invoice_docs]
     inv_map   = {iv.invoice_id: iv for iv in inv_views}
     # ── Sort txns: larger amounts first for greedy assignment ─────────────────
-    txn_views.sort(key=lambda t: t.amount, reverse=True)
+    # Tie-break deterministically on (txn_date asc, txn_id asc).
+    # This guarantees canonical "first-seen" priority for duplicate pairs (e.g. TXN-076 vs TXN-077).
+    txn_views.sort(key=lambda t: (-t.amount, t.txn_date, t.txn_id))
 
     claimed_txns: Set[str] = set()
     claimed_invoices: Set[str] = set()
