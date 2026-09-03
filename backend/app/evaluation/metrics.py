@@ -160,79 +160,94 @@ async def compute_metrics(
         )
         return result
 
-    # Build ground-truth lookup: {frozenset(txn_ids) | frozenset(invoice_ids)} → label
-    gt_true = [lb for lb in gt_labels if lb.is_true_match]
-    result.total_ground_truths = len(gt_true)
+    gt_true = [lb for lb in gt_labels if lb.is_true_match and lb.txn_ids]
 
-    # Index GT by invoice_id for fast lookup
-    gt_by_invoice: Dict[str, GroundTruthLabel] = {
-        lb.invoice_id: lb for lb in gt_true
-    }
-    # Track which GT labels were matched (for FN computation)
-    matched_gt: Set[str] = set()
+    # Build true reconciliation events:
+    # Group GT labels by frozenset(txn_ids) so batched payouts (1 txn -> many invoices)
+    # and split settlements (many txns -> 1 invoice) are evaluated as single reconciliation events.
+    txn_to_invoices: Dict[frozenset[str], Set[str]] = {}
+    txn_to_cat: Dict[frozenset[str], str] = {}
+    inv_to_cat: Dict[str, str] = {}
+
+    for lb in gt_labels:
+        if lb.invoice_id:
+            inv_to_cat[lb.invoice_id] = lb.case_category or "unknown"
+
+    for lb in gt_true:
+        key = frozenset(lb.txn_ids)
+        if key not in txn_to_invoices:
+            txn_to_invoices[key] = set()
+        txn_to_invoices[key].add(lb.invoice_id)
+        txn_to_cat[key] = lb.case_category or "unknown"
+
+    # List of ground-truth events
+    gt_events = [
+        {
+            "event_id": f"EVT-{idx}",
+            "txn_ids": txn_set,
+            "invoice_ids": frozenset(inv_set),
+            "category": txn_to_cat[txn_set],
+        }
+        for idx, (txn_set, inv_set) in enumerate(txn_to_invoices.items())
+    ]
+    result.total_ground_truths = len(gt_events)
+
+    # Track matched GT event IDs
+    matched_gt_event_ids: Set[str] = set()
 
     # ── Score each auto_accept prediction against GT ──────────────────────────
     auto_accepts = [m for m in matches if m.confidence_band == "auto_accept"]
 
     for match in auto_accepts:
-        # Extract predicted groups from line items
         pred_txn_ids     = frozenset(li.txn_id     for li in match.line_items if li.txn_id)
         pred_invoice_ids = frozenset(li.invoice_id for li in match.line_items if li.invoice_id)
 
-        is_tp = False
-        for inv_id in pred_invoice_ids:
-            gt = gt_by_invoice.get(inv_id)
-            if gt is None:
-                continue
-            gt_txn_ids_set     = frozenset(gt.txn_ids)
-            gt_invoice_ids_set = frozenset([gt.invoice_id])
+        matched_evt = None
+        for evt in gt_events:
+            if evt["event_id"] not in matched_gt_event_ids:
+                if evaluate_match(pred_txn_ids, pred_invoice_ids, evt["txn_ids"], evt["invoice_ids"]):
+                    matched_evt = evt
+                    break
 
-            if evaluate_match(pred_txn_ids, pred_invoice_ids, gt_txn_ids_set, gt_invoice_ids_set):
-                is_tp = True
-                matched_gt.add(inv_id)
-
-                # Per-category tracking
-                cat = gt.case_category or "unknown"
-                _add_to_category(result.by_category, cat, tp=1)
-                break
-
-        if is_tp:
+        if matched_evt:
             result.true_positives += 1
+            matched_gt_event_ids.add(matched_evt["event_id"])
+            _add_to_category(result.by_category, matched_evt["category"], tp=1)
         else:
             result.false_positives += 1
-            # Compute FP rupee cost
             fp_amt = sum(li.allocated_amount for li in match.line_items if li.allocated_amount)
             result.fp_rupee_cost += fp_amt
 
-            # Per-category FP
+            # Tag FP under candidate invoice category if known
+            cat = "unknown"
             for inv_id in pred_invoice_ids:
-                gt = gt_by_invoice.get(inv_id)
-                cat = gt.case_category if gt else "unknown"
-                _add_to_category(result.by_category, cat, fp=1)
+                if inv_id in inv_to_cat:
+                    cat = inv_to_cat[inv_id]
+                    break
+            _add_to_category(result.by_category, cat, fp=1)
 
-    # ── Also check review-band for recall (true matches in review = FN for auto) ─
+    # ── Check review-band for recall (true matches in review = FN for auto) ──
     review_matches = [m for m in matches if m.confidence_band == "review"]
     for match in review_matches:
         pred_txn_ids     = frozenset(li.txn_id     for li in match.line_items if li.txn_id)
         pred_invoice_ids = frozenset(li.invoice_id for li in match.line_items if li.invoice_id)
 
-        for inv_id in pred_invoice_ids:
-            gt = gt_by_invoice.get(inv_id)
-            if gt is None:
-                continue
-            gt_txn_ids_set     = frozenset(gt.txn_ids)
-            gt_invoice_ids_set = frozenset([gt.invoice_id])
-            if evaluate_match(pred_txn_ids, pred_invoice_ids, gt_txn_ids_set, gt_invoice_ids_set):
-                matched_gt.add(inv_id)
-                cat = gt.case_category or "unknown"
-                _add_to_category(result.by_category, cat, review_tp=1)
+        matched_evt = None
+        for evt in gt_events:
+            if evt["event_id"] not in matched_gt_event_ids:
+                if evaluate_match(pred_txn_ids, pred_invoice_ids, evt["txn_ids"], evt["invoice_ids"]):
+                    matched_evt = evt
+                    break
 
-    # ── False negatives: GT matches not found at all ──────────────────────────
-    unmatched_gt = set(gt_by_invoice.keys()) - matched_gt
-    result.false_negatives = len(unmatched_gt)
-    for inv_id in unmatched_gt:
-        cat = gt_by_invoice[inv_id].case_category or "unknown"
-        _add_to_category(result.by_category, cat, fn=1)
+        if matched_evt:
+            matched_gt_event_ids.add(matched_evt["event_id"])
+            _add_to_category(result.by_category, matched_evt["category"], review_tp=1)
+
+    # ── False negatives: GT events not matched in auto_accept ─────────────────
+    unmatched_events = [evt for evt in gt_events if evt["event_id"] not in matched_gt_event_ids]
+    result.false_negatives = len(unmatched_events)
+    for evt in unmatched_events:
+        _add_to_category(result.by_category, evt["category"], fn=1)
 
     # ── Compute overall metrics ───────────────────────────────────────────────
     tp = result.true_positives

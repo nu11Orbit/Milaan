@@ -30,6 +30,7 @@ from pydantic import BaseModel
 
 from app.models.bank_transaction import BankTransaction
 from app.models.invoice import Invoice
+from app.models.ground_truth_label import GroundTruthLabel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -165,13 +166,15 @@ class BatchUploadResponse(BaseModel):
 
 @router.post("/batches", response_model=BatchUploadResponse)
 async def upload_batch(
-    merchant_id:      str            = Form(...),
-    bank_csv:         UploadFile     = File(...,  description="Bank statement CSV"),
-    invoice_csv:      UploadFile     = File(...,  description="Invoice register CSV"),
-    batch_id:         Optional[str]  = Form(None, description="Supply to overwrite an existing batch"),
+    merchant_id:      str                     = Form(...),
+    bank_csv:         UploadFile              = File(...,  description="Bank statement CSV"),
+    invoice_csv:      UploadFile              = File(...,  description="Invoice register CSV"),
+    ground_truth_csv: Optional[UploadFile]     = File(None, description="Ground truth CSV (optional)"),
+    batch_id:         Optional[str]           = Form(None, description="Supply to overwrite an existing batch"),
 ):
     """
     Upload a bank statement CSV + invoice CSV to create a reconciliation batch.
+    Optionally upload a ground truth CSV for evaluation.
 
     Returns a batch_id to pass to POST /api/batches/{id}/run.
     Malformed rows are returned in parse_errors and skipped — the batch is
@@ -216,15 +219,39 @@ async def upload_batch(
         inv.batch_id = batch_id
         invs_to_insert.append(inv)
 
+    # ── Read + parse ground truth CSV (optional) ──────────────────────────────
+    gt_to_insert: List[GroundTruthLabel] = []
+    if ground_truth_csv:
+        gt_content = (await ground_truth_csv.read()).decode("utf-8", errors="replace")
+        gt_reader  = csv.DictReader(io.StringIO(gt_content))
+        for row in gt_reader:
+            inv_id = row.get("invoice_id", "").strip()
+            txn_ids_raw = row.get("txn_ids", "").strip()
+            txn_ids = [t.strip() for t in txn_ids_raw.split(",") if t.strip()] if txn_ids_raw else []
+            is_true = row.get("is_true_match", "true").strip().lower() in ("true", "1", "yes")
+            cat = row.get("case_category", "clean").strip()
+            gt_to_insert.append(
+                GroundTruthLabel(
+                    batch_id=batch_id,
+                    invoice_id=inv_id,
+                    txn_ids=txn_ids,
+                    is_true_match=is_true,
+                    case_category=cat,
+                )
+            )
+
     # ── Persist to Atlas ───────────────────────────────────────────────────────
     if txns_to_insert:
         await BankTransaction.insert_many(txns_to_insert)
     if invs_to_insert:
         await Invoice.insert_many(invs_to_insert)
+    if gt_to_insert:
+        await GroundTruthLabel.insert_many(gt_to_insert)
 
     log.info(
         f"Batch {batch_id} uploaded: {len(txns_to_insert)} txns, "
-        f"{len(invs_to_insert)} invoices, {len(parse_errors)} parse errors"
+        f"{len(invs_to_insert)} invoices, {len(gt_to_insert)} ground truth labels, "
+        f"{len(parse_errors)} parse errors"
     )
 
     return BatchUploadResponse(
