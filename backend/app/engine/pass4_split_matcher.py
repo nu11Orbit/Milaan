@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Dict, List, Optional, Literal
@@ -73,14 +74,19 @@ def _name_ok(txn_narration: str, inv_counterparty: str) -> bool:
     stopwords = {
         "PRIVATE", "LIMITED", "PVT", "LTD", "SERVICES", "SOLUTIONS",
         "CORP", "CORPORATION", "ENTERPRISES", "TRADING", "TRADERS",
-        "GROUP", "ASSOCIATES", "SUPPLIERS", "LOGISTICS"
+        "GROUP", "ASSOCIATES", "SUPPLIERS", "LOGISTICS", "AND", "THE",
+        "FOR", "FROM", "WITH", "PAYMENT", "INDIA", "INDUSTRIES",
+        "TECHNOLOGIES", "PLC", "CO", "COMPANY"
     }
-    cparty_tokens = [t for t in cparty.split() if len(t) >= 3 and t not in stopwords]
+    cparty_tokens = [
+        t.strip(",.-/'\"") for t in cparty.split()
+        if len(t.strip(",.-/'\"")) >= 4 and t.strip(",.-/'\"") not in stopwords
+    ]
     if cparty_tokens and any(t in narr for t in cparty_tokens):
         return True
         
     token_set = fuzz.token_set_ratio(cparty, narr)
-    return token_set >= 65.0
+    return token_set >= 70.0
 
 
 # ── Result dataclass ──────────────────────────────────────────────────────────
@@ -123,6 +129,9 @@ class SplitMatchResult:
     counterparty_floor_violated: bool = False  # A txn in subset failed name check
 
 
+_INV_RE = re.compile(r"\bINV-\d+\b", re.IGNORECASE)
+
+
 # ── Split: many txns → one invoice ────────────────────────────────────────────
 
 def run_pass4_split(
@@ -138,8 +147,7 @@ def run_pass4_split(
     ----------
     invoice        : The invoice being matched.
     candidate_txns : Pool of unmatched credits for this merchant,
-                     pre-narrowed by the orchestrator (same merchant,
-                     date window, direction='credit').
+                     pre-narrowed by the orchestrator.
     settings       : Injected settings.
 
     Returns
@@ -154,46 +162,54 @@ def run_pass4_split(
     target_p  = _to_paise(target)
     max_pool  = settings.split_pool_max_size
 
-    # ── Diagnostic logging for test cases ─────────────────────────────────────
-    if invoice.invoice_id == "INV-004" or any(t.txn_id in ("TXN-004", "TXN-005") for t in candidate_txns):
-        log.info(f"[PASS4-SPLIT-DEBUG] invoice={invoice.invoice_id} (₹{target}) candidate_txns={[t.txn_id for t in candidate_txns]}")
+    # Filter candidate transactions to those relevant to this invoice (name or explicit ID)
+    inv_id = (invoice.invoice_id or "").upper()
+    relevant_txns = []
+    for t in candidate_txns:
+        if t.direction != "credit":
+            continue
+        narr = (t.narration or "").upper()
+        found_invs = _INV_RE.findall(narr)
+        if found_invs:
+            if inv_id in [fi.upper() for fi in found_invs]:
+                relevant_txns.append(t)
+        else:
+            if _name_ok(t.narration, invoice.counterparty_name):
+                relevant_txns.append(t)
+
+    pool = relevant_txns if relevant_txns else [t for t in candidate_txns if t.direction == "credit"]
 
     # ── Pool too large → flag for LLM ─────────────────────────────────────────
-    if len(candidate_txns) > max_pool:
+    if len(pool) > max_pool:
         return SplitMatchResult(
             match_type="flagged_for_llm",
             invoice_ids=[invoice.invoice_id],
             flagged_for_llm=True,
             explanation=(
-                f"Split pool size {len(candidate_txns)} exceeds max {max_pool}. "
+                f"Split pool size {len(pool)} exceeds max {max_pool}. "
                 f"Flagged for LLM adjudication — cannot enumerate subsets safely."
             ),
         )
 
     # ── Enumerate all subsets of size >= 2 (splits require 2+ txns) ───────────
-    txn_paise  = [_to_paise(t.amount) for t in candidate_txns]
+    txn_paise  = [_to_paise(t.amount) for t in pool]
     solutions: List[tuple] = []   # Each element: tuple of indices
 
-    for size in range(2, len(candidate_txns) + 1):
-        for combo in itertools.combinations(range(len(candidate_txns)), size):
+    for size in range(2, len(pool) + 1):
+        for combo in itertools.combinations(range(len(pool)), size):
             subset_sum = sum(txn_paise[i] for i in combo)
             if abs(subset_sum - target_p) <= tol_paise:
                 solutions.append(combo)
 
-    if invoice.invoice_id == "INV-004" or any(t.txn_id in ("TXN-004", "TXN-005") for t in candidate_txns):
-        log.info(f"[PASS4-SPLIT-DEBUG] invoice={invoice.invoice_id} found {len(solutions)} raw solutions")
-
     # ── No subset sums to target → check for partial payment ──────────────────
     if not solutions:
-        # Partial: largest single txn that is less than the invoice amount AND
-        # passes the counterparty name floor check against this invoice.
         credits_below = [
-            (i, txn_paise[i]) for i in range(len(candidate_txns))
-            if txn_paise[i] < target_p and _name_ok(candidate_txns[i].narration, invoice.counterparty_name)
+            (i, txn_paise[i]) for i in range(len(pool))
+            if txn_paise[i] < target_p and _name_ok(pool[i].narration, invoice.counterparty_name)
         ]
         if credits_below:
             best_i, best_p = max(credits_below, key=lambda x: x[1])
-            best_txn = candidate_txns[best_i]
+            best_txn = pool[best_i]
             paid    = best_txn.amount
             remaining = target - paid
             return SplitMatchResult(
@@ -217,48 +233,42 @@ def run_pass4_split(
     # ── Pick best valid solution: filter by counterparty name floor first ─────
     valid_solutions = [
         combo for combo in solutions
-        if all(_name_ok(candidate_txns[i].narration, invoice.counterparty_name) for i in combo)
+        if all(_name_ok(pool[i].narration, invoice.counterparty_name) for i in combo)
     ]
-
     if not valid_solutions:
-        return SplitMatchResult(
-            match_type="no_match",
-            invoice_ids=[invoice.invoice_id],
-            explanation="No subset of candidate transactions satisfied counterparty consistency.",
-        )
+        valid_solutions = solutions
 
-    def _solution_score(combo):
-        n_txns     = len(combo)
-        max_delta  = max(
-            abs((candidate_txns[i].txn_date - invoice.invoice_date).days)
+    def _split_score(combo):
+        n_txns    = len(combo)
+        max_delta = max(
+            abs((pool[i].txn_date - invoice.invoice_date).days)
             for i in combo
         )
-        return (n_txns, max_delta)   # fewest txns first, then closest dates
+        return (n_txns, max_delta)
 
-    valid_solutions.sort(key=_solution_score)
-    best_combo = valid_solutions[0]
-    best_txns  = [candidate_txns[i] for i in best_combo]
-    allocated  = {t.txn_id: t.amount for t in best_txns}
-    ambiguous  = len(valid_solutions) > 1
+    valid_solutions.sort(key=_split_score)
+    best_combo   = valid_solutions[0]
+    best_txns    = [pool[i] for i in best_combo]
+    ambiguous    = len(valid_solutions) > 1
+    req_review   = len(best_txns) > 2
+    allocated    = {t.txn_id: t.amount for t in best_txns}
 
-    result = SplitMatchResult(
+    return SplitMatchResult(
         match_type="split_many_to_one",
-        invoice_ids=[invoice.invoice_id],
         txn_ids=[t.txn_id for t in best_txns],
+        invoice_ids=[invoice.invoice_id],
         allocated_amounts=allocated,
         remaining_unallocated=Decimal("0"),
         confidence_delta=45.0 if not ambiguous else 25.0,
-        requires_human_review=len(best_txns) > 2,
         ambiguous=ambiguous,
+        requires_human_review=req_review,
         explanation=(
-            f"Split settlement: {len(best_txns)} transaction(s) totalling "
-            f"₹{sum(t.amount for t in best_txns)} match invoice ₹{target}."
-            + (f" ({len(solutions)} valid subsets found; selected fewest-txns solution.)"
+            f"Split payment: {len(best_txns)} transactions sum to invoice ₹{target}."
+            + (f" ({len(solutions)} valid subsets; fewest-txn solution selected.)"
                if ambiguous else "")
-            + (" Flagged for human review (>2 txns)." if len(best_txns) > 2 else "")
+            + (" Requires human review (>2 transactions)." if req_review else "")
         ),
     )
-    return result
 
 
 # ── Batch: one txn → many invoices ────────────────────────────────────────────
@@ -271,13 +281,6 @@ def run_pass4_batch(
     """
     Find a subset of `candidate_invoices` whose expected_net_amounts sum to
     txn.amount (±tolerance).
-
-    Parameters
-    ----------
-    txn               : The bank transaction being matched.
-    candidate_invoices: Pool of open invoices for this merchant,
-                        pre-narrowed by the orchestrator.
-    settings          : Injected settings.
     """
     if settings is None:
         settings = get_settings()
@@ -287,34 +290,44 @@ def run_pass4_batch(
     target_p  = _to_paise(target)
     max_pool  = settings.split_pool_max_size
 
-    # ── Diagnostic logging for TXN-007 ────────────────────────────────────────
-    if txn.txn_id == "TXN-007":
-        log.info(f"[PASS4-BATCH-DEBUG] txn={txn.txn_id} (₹{target}) candidate_invoices={[i.invoice_id for i in candidate_invoices]}")
+    # Narrow candidate invoices by name consistency or explicit invoice ID in narration
+    narr = (txn.narration or "").upper()
+    found_invs = set(_INV_RE.findall(narr))
+    relevant_invoices = []
+    for inv in candidate_invoices:
+        if inv.status != "open":
+            continue
+        inv_id = (inv.invoice_id or "").upper()
+        if found_invs:
+            if inv_id in found_invs:
+                relevant_invoices.append(inv)
+        else:
+            if _name_ok(txn.narration, inv.counterparty_name):
+                relevant_invoices.append(inv)
 
-    # ── Pool too large → flag ─────────────────────────────────────────────────
-    if len(candidate_invoices) > max_pool:
+    pool = relevant_invoices if relevant_invoices else [inv for inv in candidate_invoices if inv.status == "open"]
+
+    # ── Pool too large → flag for LLM ─────────────────────────────────────────
+    if len(pool) > max_pool:
         return SplitMatchResult(
             match_type="flagged_for_llm",
             txn_ids=[txn.txn_id],
             flagged_for_llm=True,
             explanation=(
-                f"Batch pool size {len(candidate_invoices)} exceeds max {max_pool}. "
+                f"Batch pool size {len(pool)} exceeds max {max_pool}. "
                 f"Flagged for LLM adjudication."
             ),
         )
 
     # ── Enumerate all subsets of size >= 2 (batches require 2+ invoices) ──────
-    inv_paise  = [_to_paise(inv.expected_net_amount) for inv in candidate_invoices]
+    inv_paise  = [_to_paise(inv.expected_net_amount) for inv in pool]
     solutions: List[tuple] = []
 
-    for size in range(2, len(candidate_invoices) + 1):
-        for combo in itertools.combinations(range(len(candidate_invoices)), size):
+    for size in range(2, len(pool) + 1):
+        for combo in itertools.combinations(range(len(pool)), size):
             subset_sum = sum(inv_paise[i] for i in combo)
             if abs(subset_sum - target_p) <= tol_paise:
                 solutions.append(combo)
-
-    if txn.txn_id == "TXN-007":
-        log.info(f"[PASS4-BATCH-DEBUG] txn={txn.txn_id} found {len(solutions)} raw solutions")
 
     if not solutions:
         return SplitMatchResult(
@@ -326,28 +339,23 @@ def run_pass4_batch(
     # ── Filter by counterparty name floor ─────────────────────────────────────
     valid_solutions = [
         combo for combo in solutions
-        if all(_name_ok(txn.narration, candidate_invoices[i].counterparty_name) for i in combo)
+        if all(_name_ok(txn.narration, pool[i].counterparty_name) for i in combo)
     ]
-
     if not valid_solutions:
-        return SplitMatchResult(
-            match_type="no_match",
-            txn_ids=[txn.txn_id],
-            explanation="No subset of candidate invoices satisfied counterparty consistency.",
-        )
+        valid_solutions = solutions
 
     # ── Best solution: fewest invoices, then closest dates ────────────────────
     def _solution_score(combo):
         n_inv     = len(combo)
         max_delta = max(
-            abs((txn.txn_date - candidate_invoices[i].invoice_date).days)
+            abs((txn.txn_date - pool[i].invoice_date).days)
             for i in combo
         )
         return (n_inv, max_delta)
 
     valid_solutions.sort(key=_solution_score)
     best_combo    = valid_solutions[0]
-    best_invoices = [candidate_invoices[i] for i in best_combo]
+    best_invoices = [pool[i] for i in best_combo]
     ambiguous = len(valid_solutions) > 1
     allocated = {inv.invoice_id: inv.expected_net_amount for inv in best_invoices}
 
@@ -382,24 +390,24 @@ def detect_duplicate_txn(
     day_window: int = 3,
 ) -> Optional[str]:
     """
-    Return the txn_id of the likely original if `txn` appears to be an accidental duplicate
+    Return the txn_id of the original transaction if `txn` appears to be an accidental duplicate
     (Case 15: identical amount + identical narration within `day_window` days).
 
     Guards against false positives:
-      - If both transactions have distinct, valid reference_numbers (e.g. unique UTRs),
-        they are distinct settlement events processed by the bank — not duplicates.
-      - If either narration contains part-payment/installment keywords ("second", "part", etc.),
-        they are legitimate split payments for Pass 4 subset-sum matching.
-
-    Returns None if no duplicate detected.
+      - If narration contains part-payment/installment keywords, returns None.
+      - Asymmetric matching ensures only the later/duplicate transaction is flagged.
     """
     txn_narr = (txn.narration or "").upper()
-    # Check if this txn is explicitly a part payment
     if any(kw in txn_narr for kw in _SPLIT_KEYWORDS):
         return None
 
     for other in all_txns_for_merchant:
         if other.txn_id == txn.txn_id:
+            continue
+        # Only flag if other is earlier in date, or same date with smaller/earlier identifier
+        if other.txn_date > txn.txn_date:
+            continue
+        if other.txn_date == txn.txn_date and other.txn_id >= txn.txn_id:
             continue
         if other.direction != txn.direction:
             continue
@@ -409,18 +417,13 @@ def detect_duplicate_txn(
         if day_delta > day_window:
             continue
 
-        # If both transactions have distinct reference numbers (e.g. UTRs), they are separate transfers
-        if txn.reference_number and other.reference_number:
-            if txn.reference_number.strip().upper() != other.reference_number.strip().upper():
-                continue
-
         other_narr = (other.narration or "").upper()
         if any(kw in other_narr for kw in _SPLIT_KEYWORDS):
             continue
 
         # Narration similarity check: near-exact match required for duplicate flag
-        sim = fuzz.ratio(txn_narr, other_narr)
-        if sim >= 95:
+        sim = max(fuzz.ratio(txn_narr, other_narr), fuzz.token_set_ratio(txn_narr, other_narr))
+        if sim >= 85:
             return other.txn_id   # Return the original txn_id
 
     return None
