@@ -136,11 +136,96 @@ def test_txn007_batch_match():
     assert result.confidence_delta >= 40.0
 
 
+@pytest.mark.asyncio
+async def test_full_orchestrator_split_and_batch_matches_not_decomposed():
+    """
+    Ensure the full orchestrator and Hungarian optimizer preserve split and batch
+    matches as single locked grouped units, never decomposing them into separate 1:1 matches.
+    """
+    from unittest.mock import MagicMock
+    from app.models.match import Match
+    from app.engine.orchestrator import _match_one_txn
+    from app.engine.hungarian_matcher import apply_hungarian_to_batch
+    from app.core.config import get_settings
+
+    if Match._document_settings is None:
+        Match._document_settings = MagicMock()
+
+    settings = get_settings()
+
+    # 1. Batch payout: TXN-007 (120k) covers INV-006 (70k) + INV-007 (50k)
+    t7 = make_txn("TXN-007", "2026-08-18", "120000", "Batch payout Reddy Group INV-006 INV-007", "credit", "RTGS")
+    res7 = await _match_one_txn(t7, ALL_INVS, INV_MAP, [t7], "B1", "R1", None, settings, set(), set())
+    assert isinstance(res7, tuple)
+    m7, top7, cr7, prov7, raw7 = res7
+    assert m7.match_type == "batch_one_to_many"
+    inv_ids_in_m7 = {li.invoice_id for li in m7.line_items}
+    assert inv_ids_in_m7 == {"INV-006", "INV-007"}
+
+    # 2. Split settlement: TXN-004 (25k) + TXN-005 (25k) settle INV-004 (50k)
+    t4 = make_txn("TXN-004", "2026-08-12", "25000", "Part payment Kapoor Logistics INV-004", "credit", "NEFT")
+    t5 = make_txn("TXN-005", "2026-08-12", "25000", "Part payment Kapoor Logistics INV-004 second", "credit", "NEFT")
+    res4 = await _match_one_txn(t4, ALL_INVS, INV_MAP, [t4, t5], "B1", "R1", None, settings, set(), set())
+    assert isinstance(res4, tuple)
+    m4, top4, cr4, prov4, raw4 = res4
+    assert m4.match_type == "split_many_to_one"
+    txn_ids_in_m4 = {li.txn_id for li in m4.line_items}
+    assert txn_ids_in_m4 == {"TXN-004", "TXN-005"}
+
+    # 3. Hungarian optimizer must preserve these matches without breaking them apart
+    pending = [
+        (m7, top7, cr7, prov7, raw7, t7),
+        (m4, top4, cr4, prov4, raw4, t4),
+    ]
+    updated, audits = apply_hungarian_to_batch(pending, {}, INV_MAP)
+    assert len(updated) == 2
+    assert updated[0][0].match_type == "batch_one_to_many"
+    assert updated[1][0].match_type == "split_many_to_one"
+    assert {li.invoice_id for li in updated[0][0].line_items} == {"INV-006", "INV-007"}
+    assert {li.txn_id for li in updated[1][0].line_items} == {"TXN-004", "TXN-005"}
+
+
+@pytest.mark.asyncio
+async def test_partial_payment_not_erroneously_grouped_into_pass4_split():
+    """
+    Lock-in: A genuine partial payment transaction (e.g. ₹35k against ₹75k invoice)
+    must NEVER be pulled into Pass 4 subset-sum grouping just because it shares a counterparty name
+    with another open invoice. It must remain an individual partial / review match.
+    """
+    from unittest.mock import MagicMock
+    from app.models.match import Match
+    from app.engine.orchestrator import _match_one_txn
+    from app.core.config import get_settings
+
+    if Match._document_settings is None:
+        Match._document_settings = MagicMock()
+
+    settings = get_settings()
+
+    # Invoice INV-055 for 75,000 and another open invoice for 100,000
+    inv55 = make_inv("INV-055", "2026-08-01", "Dave Ltd Logistics", "75000", "75000", net="75000")
+    inv_other = make_inv("INV-OTHER", "2026-08-01", "Dave Ltd Logistics", "100000", "100000", net="100000")
+    t_partial = make_txn("TXN-056", "2026-08-03", "35000", "IMPS Partial advance payment DAVE LTD LOGISTICS on INV-055")
+    
+    invoices = [inv55, inv_other]
+    inv_map = {i.invoice_id: i for i in invoices}
+    all_txns = [t_partial]
+
+    res = await _match_one_txn(t_partial, invoices, inv_map, all_txns, "B1", "R1", None, settings, set(), set())
+    assert isinstance(res, tuple)
+    m, top, cr, prov, raw = res
+    # Must NOT be grouped as a split_many_to_one with non-existent transactions
+    assert m.match_type != "split_many_to_one"
+    assert m.match_type in ("one_to_one", "partial")
+    # Must point to INV-055 specifically, not INV-OTHER
+    assert {li.invoice_id for li in m.line_items} == {"INV-055"}
+
+
 # ── Exception Explanation Text Invariant Tests ───────────────────────────────
 
 @pytest.mark.asyncio
 async def test_all_exception_code_paths_have_non_empty_explanation():
-    """Every exception path must populate a non-empty explanation_text."""
+    """Every exception path must populate non-empty explanation_text AND exception_reason_category."""
     from unittest.mock import MagicMock
     from app.models.match import Match
     from app.engine.orchestrator import _match_one_txn
@@ -157,7 +242,7 @@ async def test_all_exception_code_paths_have_non_empty_explanation():
     assert m_debit.match_type == "exception"
     assert m_debit.confidence_band == "reject"
     assert m_debit.explanation_text and len(m_debit.explanation_text.strip()) > 0
-    assert "debit" in m_debit.explanation_text.lower()
+    assert m_debit.exception_reason_category == "debit_transaction"
 
     # 2. Noise exception
     t_noise = make_txn("TXN-NOISE", "2026-08-01", "10", "Bank interest credit")
@@ -165,7 +250,7 @@ async def test_all_exception_code_paths_have_non_empty_explanation():
     assert m_noise.match_type == "exception"
     assert m_noise.confidence_band == "reject"
     assert m_noise.explanation_text and len(m_noise.explanation_text.strip()) > 0
-    assert "noise" in m_noise.explanation_text.lower() or "below" in m_noise.explanation_text.lower()
+    assert m_noise.exception_reason_category == "noise_below_floor"
 
     # 3. No candidate in window exception
     t_none = make_txn("TXN-UNKNOWN", "2025-01-01", "999999", "Random old vendor payment")
@@ -173,7 +258,7 @@ async def test_all_exception_code_paths_have_non_empty_explanation():
     assert m_none.match_type == "exception"
     assert m_none.confidence_band == "reject"
     assert m_none.explanation_text and len(m_none.explanation_text.strip()) > 0
-    assert "candidate" in m_none.explanation_text.lower() or "no" in m_none.explanation_text.lower()
+    assert m_none.exception_reason_category == "no_candidate_found"
 
     # 4. Duplicate exception
     t_orig = make_txn("TXN-ORIG", "2026-08-01", "50000", "Vendor payout")
@@ -182,11 +267,11 @@ async def test_all_exception_code_paths_have_non_empty_explanation():
     assert m_dup.match_type == "exception"
     assert m_dup.confidence_band == "reject"
     assert m_dup.explanation_text and len(m_dup.explanation_text.strip()) > 0
-    assert "duplicate" in m_dup.explanation_text.lower()
+    assert m_dup.exception_reason_category == "duplicate_detected"
 
 
 def test_hungarian_demotion_has_non_empty_explanation():
-    """Hungarian demoted match has detailed non-empty explanation_text."""
+    """Hungarian demoted match has detailed non-empty explanation_text and exception_reason_category."""
     from unittest.mock import MagicMock
     from app.engine.hungarian_matcher import apply_hungarian_to_batch
     from app.models.match import Match, MatchLineItem
@@ -242,4 +327,5 @@ def test_hungarian_demotion_has_non_empty_explanation():
     assert m10_updated.line_items[0].invoice_id is None
     assert m10_updated.explanation_text and len(m10_updated.explanation_text.strip()) > 0
     assert "INV-001" in m10_updated.explanation_text
+    assert m10_updated.exception_reason_category == "no_viable_candidate"
 
