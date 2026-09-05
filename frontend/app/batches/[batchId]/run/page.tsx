@@ -4,7 +4,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { getMatches, API_BASE_URL } from "@/lib/api";
+import { getMatches, getRunStatus, API_BASE_URL } from "@/lib/api";
 import {
   Activity,
   CheckCircle2,
@@ -138,54 +138,76 @@ export default function RunPage() {
 
     let es: EventSource | null = null;
     let isCancelled = false;
+    let fallbackPollTimer: NodeJS.Timeout | null = null;
 
-    // 1. Immediately initiate SSE stream connection without blocking on getMatches
-    connectSse();
-
-    // 2. Concurrently check if run already finished, and poll every 3s as a robust fallback
-    const pollMatches = () => {
-      getMatches(batchId, runId)
-        .then((res) => {
-          if (isCancelled) return;
-          if (res.matches && res.matches.length > 0) {
-            const mapped: SseRecord[] = res.matches.map((m, i) => ({
-              idx: i + 1,
-              total: res.matches.length,
-              match_id: m.match_id,
-              txn_id: m.line_items.find((li) => li.txn_id)?.txn_id ?? `TXN-${i + 1}`,
-              amount: m.line_items.reduce((s, li) => s + (Number(li.allocated_amount) || 0), 0).toFixed(2),
-              band: m.confidence_band,
-              score: m.confidence_score,
-              match_type: m.match_type,
-              invoices: m.line_items.filter((li) => li.invoice_id).map((li) => li.invoice_id!),
-              explanation: m.explanation_text ?? undefined,
-            }));
-            setRecords(mapped);
-            setStatus("completed");
-            setDone({
-              done: true,
-              auto_accept: mapped.filter((r) => r.band === "auto_accept").length,
-              review: mapped.filter((r) => r.band === "review").length,
-              exceptions: mapped.filter((r) => r.band === "reject" || r.band === "exception").length,
-              total: mapped.length,
-            });
-            clearInterval(pollInterval);
-            es?.close();
-          }
-        })
-        .catch(() => {});
+    // Helper to map and store the final complete set of matches from DB
+    const syncFinalMatches = async () => {
+      try {
+        const res = await getMatches(batchId, runId);
+        if (isCancelled || !res.matches || res.matches.length === 0) return;
+        const mapped: SseRecord[] = res.matches.map((m, i) => ({
+          idx: i + 1,
+          total: res.matches.length,
+          match_id: m.match_id,
+          txn_id: m.line_items.find((li) => li.txn_id)?.txn_id ?? `TXN-${i + 1}`,
+          amount: m.line_items.reduce((s, li) => s + (Number(li.allocated_amount) || 0), 0).toFixed(2),
+          band: m.confidence_band,
+          score: m.confidence_score,
+          match_type: m.match_type,
+          invoices: m.line_items.filter((li) => li.invoice_id).map((li) => li.invoice_id!),
+          explanation: m.explanation_text ?? undefined,
+        }));
+        setRecords(mapped);
+        setStatus("completed");
+        setDone({
+          done: true,
+          auto_accept: mapped.filter((r) => r.band === "auto_accept").length,
+          review: mapped.filter((r) => r.band === "review").length,
+          exceptions: mapped.filter((r) => r.band === "reject" || r.band === "exception").length,
+          total: mapped.length,
+        });
+        if (fallbackPollTimer) {
+          clearInterval(fallbackPollTimer);
+          fallbackPollTimer = null;
+        }
+        es?.close();
+      } catch { /* ignore */ }
     };
 
-    // Run initial check and start 3s poll interval
-    pollMatches();
-    const pollInterval = setInterval(pollMatches, 3000);
+    // Polling fallback checks run status (only completes when backend status is "complete")
+    const pollRunStatus = async () => {
+      try {
+        const statusRes = await getRunStatus(batchId, runId);
+        if (isCancelled) return;
+        if (statusRes.status === "complete") {
+          await syncFinalMatches();
+        }
+      } catch { /* ignore */ }
+    };
+
+    // Check once on mount if the run has already finished
+    getRunStatus(batchId, runId).then((res) => {
+      if (isCancelled) return;
+      if (res.status === "complete") {
+        syncFinalMatches();
+      } else {
+        connectSse();
+      }
+    }).catch(() => {
+      connectSse();
+    });
 
     function connectSse() {
+      if (es) return;
       try {
         es = new EventSource(`${BASE}/api/batches/${batchId}/run/${runId}/stream`);
 
         es.onopen = () => {
           if (!isCancelled) setStatus("streaming");
+          if (fallbackPollTimer) {
+            clearInterval(fallbackPollTimer);
+            fallbackPollTimer = null;
+          }
         };
 
         es.onmessage = (evt) => {
@@ -199,16 +221,21 @@ export default function RunPage() {
             }
 
             if (data.error) {
-              pollMatches();
-              es?.close();
+              // If stream reports error, check if the run actually finished
+              pollRunStatus();
               return;
             }
 
             if (data.done) {
               setDone(data as DoneEvent);
               setStatus("completed");
-              clearInterval(pollInterval);
+              if (fallbackPollTimer) {
+                clearInterval(fallbackPollTimer);
+                fallbackPollTimer = null;
+              }
               es?.close();
+              // Sync full DB matches to ensure Hungarian post-processing details are 100% authoritative
+              syncFinalMatches();
               return;
             }
 
@@ -222,21 +249,27 @@ export default function RunPage() {
                 return [...prev, data as SseRecord];
               });
             }
-          } catch { /* ignore malformed lines / comments */ }
+          } catch { /* ignore keepalives / comments */ }
         };
 
         es.onerror = () => {
-          // If SSE connection disconnects, poll DB directly
-          pollMatches();
+          // If SSE connection drops or is throttled by proxy, start the status polling fallback
+          if (!fallbackPollTimer && !isCancelled) {
+            fallbackPollTimer = setInterval(pollRunStatus, 2500);
+            pollRunStatus();
+          }
         };
       } catch (err) {
-        pollMatches();
+        if (!fallbackPollTimer && !isCancelled) {
+          fallbackPollTimer = setInterval(pollRunStatus, 2500);
+          pollRunStatus();
+        }
       }
     }
 
     return () => {
       isCancelled = true;
-      clearInterval(pollInterval);
+      if (fallbackPollTimer) clearInterval(fallbackPollTimer);
       es?.close();
     };
   }, [batchId, runId]);

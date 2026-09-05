@@ -106,7 +106,7 @@ def _is_noise(txn: TxnView) -> bool:
 
 # ── Audit log helper ──────────────────────────────────────────────────────────
 
-async def _write_audit(
+def _build_audit(
     match_id: str,
     batch_id: str,
     pass_name: str,
@@ -118,8 +118,8 @@ async def _write_audit(
     llm_model: Optional[str] = None,
     llm_fallback: bool = False,
     llm_both_failed: bool = False,
-) -> None:
-    entry = AuditLogEntry(
+) -> AuditLogEntry:
+    return AuditLogEntry(
         log_id=f"LOG-{uuid.uuid4().hex[:12]}",
         match_id=match_id,
         batch_id=batch_id,
@@ -133,7 +133,6 @@ async def _write_audit(
         llm_fallback_used=llm_fallback,
         llm_both_failed=llm_both_failed,
     )
-    await entry.insert()
 
 
 # ── SSE event builder ──────────────────────────────────────────────────────────
@@ -565,11 +564,13 @@ async def run_reconciliation(
 
     total_matches = len(pending_matches)
 
-    # ── Persist matches + write audit logs ───────────────────────────────────
+    # ── Persist matches + write audit logs (batch insert for maximum speed) ─
     auto_accept_count = review_count = reject_count = 0
+    matches_to_insert: List[Match] = []
+    audits_to_insert: List[AuditLogEntry] = []
 
     for m_idx, (match, top, cr, llm_prov, llm_raw, txn_view) in enumerate(pending_matches):
-        await match.insert()
+        matches_to_insert.append(match)
 
         if match.confidence_band == "auto_accept":
             auto_accept_count += 1
@@ -582,53 +583,67 @@ async def run_reconciliation(
         if top and cr:
             for contrib in top.contributions:
                 if contrib.rule_fired:
-                    await _write_audit(
-                        match_id=match.match_id,
-                        batch_id=batch_id,
-                        pass_name=_contrib_to_pass(contrib.source),
-                        score_delta=contrib.delta,
-                        score_after=None,
-                        reasoning=contrib.reason,
+                    audits_to_insert.append(
+                        _build_audit(
+                            match_id=match.match_id,
+                            batch_id=batch_id,
+                            pass_name=_contrib_to_pass(contrib.source),
+                            score_delta=contrib.delta,
+                            score_after=None,
+                            reasoning=contrib.reason,
+                        )
                     )
 
             # Audit: confidence scorer
-            await _write_audit(
-                match_id=match.match_id,
-                batch_id=batch_id,
-                pass_name="confidence_scorer",
-                score_delta=None,
-                score_after=cr.final_score,
-                reasoning=f"Band={cr.band} Decision={cr.decision} Gates: "
-                          f"human_review={cr.gate_human_review} "
-                          f"hard_floor={cr.gate_hard_floor}",
+            audits_to_insert.append(
+                _build_audit(
+                    match_id=match.match_id,
+                    batch_id=batch_id,
+                    pass_name="confidence_scorer",
+                    score_delta=None,
+                    score_after=cr.final_score,
+                    reasoning=f"Band={cr.band} Decision={cr.decision} Gates: "
+                              f"human_review={cr.gate_human_review} "
+                              f"hard_floor={cr.gate_hard_floor}",
+                )
             )
 
         # Audit: LLM pass
         if llm_prov and llm_prov not in ("none", ""):
-            await _write_audit(
-                match_id=match.match_id,
-                batch_id=batch_id,
-                pass_name="pass5_llm",
-                score_delta=None,
-                score_after=match.confidence_score,
-                reasoning=match.explanation_text,
-                raw_llm=llm_raw,
-                llm_provider=llm_prov if llm_prov in ("gemini", "groq") else None,
-                llm_model=settings.gemini_model if llm_prov == "gemini" else settings.groq_model,
-                llm_fallback=(llm_prov == "groq"),
-                llm_both_failed=(llm_prov == "fallback_no_llm"),
+            audits_to_insert.append(
+                _build_audit(
+                    match_id=match.match_id,
+                    batch_id=batch_id,
+                    pass_name="pass5_llm",
+                    score_delta=None,
+                    score_after=match.confidence_score,
+                    reasoning=match.explanation_text,
+                    raw_llm=llm_raw,
+                    llm_provider=llm_prov if llm_prov in ("gemini", "groq") else None,
+                    llm_model=settings.gemini_model if llm_prov == "gemini" else settings.groq_model,
+                    llm_fallback=(llm_prov == "groq"),
+                    llm_both_failed=(llm_prov == "fallback_no_llm"),
+                )
             )
 
     # Audit: Hungarian reassignments (if any occurred)
     for match_id, pass_name, reasoning in hungarian_audits:
-        await _write_audit(
-            match_id=match_id,
-            batch_id=batch_id,
-            pass_name=pass_name,
-            score_delta=None,
-            score_after=None,
-            reasoning=reasoning,
+        audits_to_insert.append(
+            _build_audit(
+                match_id=match_id,
+                batch_id=batch_id,
+                pass_name=pass_name,
+                score_delta=None,
+                score_after=None,
+                reasoning=reasoning,
+            )
         )
+
+    # Fast batch insert into MongoDB Atlas
+    if matches_to_insert:
+        await Match.insert_many(matches_to_insert)
+    if audits_to_insert:
+        await AuditLogEntry.insert_many(audits_to_insert)
 
     # ── SSE: finalize ───────────────────────────────────────────────────────
     if sse_queue:
