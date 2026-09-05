@@ -4,7 +4,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { getMatches } from "@/lib/api";
+import { getMatches, API_BASE_URL } from "@/lib/api";
 import {
   Activity,
   CheckCircle2,
@@ -68,7 +68,7 @@ const BAND_CONFIG: Record<string, { label: string; pillClass: string; icon: Reac
   },
 } as const;
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BASE = API_BASE_URL;
 
 export default function RunPage() {
   const { batchId } = useParams<{ batchId: string }>();
