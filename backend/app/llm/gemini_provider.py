@@ -37,9 +37,27 @@ _GEMINI_REST_URL = (
     "/{model}:generateContent"
 )
 
+# Fast-fail: short connect window — if the server doesn't start sending a
+# response within 5 s we bail immediately (observed behaviour with some
+# flash-lite variants that accept the request but never return a body).
+# Read timeout is generous because gemini-3.6-flash is a thinking model and
+# spends ~100-300 tokens on internal reasoning before writing visible output.
+_GEMINI_CONNECT_TIMEOUT = 5.0
+_GEMINI_READ_TIMEOUT    = 30.0   # match LLM_TIMEOUT_SECONDS env var
+
 
 class ProviderError(Exception):
-    """Raised by any LLM provider on failure — router catches this."""
+    """Raised by any LLM provider on a recoverable failure — router retries."""
+    pass
+
+
+class RateLimitError(ProviderError):
+    """
+    Raised when a provider returns HTTP 429 (quota exhausted) or 503 (capacity).
+    The router SKIPS retries on this error and immediately tries the next
+    provider — retrying the same provider with backoff is pointless when the
+    daily/minute token quota is fully exhausted.
+    """
     pass
 
 
@@ -88,6 +106,10 @@ async def call(
         raise ProviderError("Gemini API key not configured")
 
     url = _GEMINI_REST_URL.format(model=settings.gemini_model)
+    # maxOutputTokens: 1024 comfortably holds the JSON output after the model's
+    # internal thinking phase (gemini-3.6-flash uses ~100-300 thinking tokens
+    # which don't count against this budget — they appear as thoughtsTokenCount
+    # in usageMetadata, not as candidatesTokenCount).
     payload = {
         "contents": [
             {
@@ -98,13 +120,20 @@ async def call(
         ],
         "generationConfig": {
             "temperature": 0.1,
-            "maxOutputTokens": 2048,
+            "maxOutputTokens": 1024,
         },
     }
 
-    # Timeout: observed p95 latency ~1.5s outside FastAPI; 15s gives ample
-    # headroom for network variance without blocking the reconciliation loop.
-    timeout = max(settings.llm_timeout_seconds, 15)
+    # Use a combined Timeout: short connect+pool window to fail fast if
+    # the generateContent endpoint is unreachable/blocked (observed behaviour
+    # where the request hangs indefinitely with 0 bytes returned).  A longer
+    # read window handles legitimate slow generation.
+    timeout = httpx.Timeout(
+        connect=_GEMINI_CONNECT_TIMEOUT,
+        read=_GEMINI_READ_TIMEOUT,
+        write=5.0,
+        pool=5.0,
+    )
 
     try:
         async with httpx.AsyncClient() as client:
@@ -116,17 +145,52 @@ async def call(
             )
         resp.raise_for_status()
         data = resp.json()
-        raw_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        log.info(f"Gemini REST call completed successfully")
 
-    except httpx.TimeoutException:
-        raise ProviderError(f"Gemini REST timeout after {timeout}s")
+        # ── Extract text robustly ──────────────────────────────────────────────
+        # gemini-3.6-flash (thinking model) returns parts like:
+        #   [{"text": "...", "thoughtSignature": "<base64>"}]
+        # We iterate parts and concatenate all text values (skipping empty ones).
+        # If no text is found the model hit MAX_TOKENS during the thinking phase;
+        # we raise ProviderError so the circuit breaker records the failure and
+        # falls through to Groq.
+        candidate = data["candidates"][0]
+        finish_reason = candidate.get("finishReason", "STOP")
+        parts = candidate.get("content", {}).get("parts", [])
+        raw_text = " ".join(
+            p["text"].strip()
+            for p in parts
+            if isinstance(p.get("text"), str) and p["text"].strip()
+        )
+        if not raw_text:
+            raise ProviderError(
+                f"Gemini returned no text content (finishReason={finish_reason}). "
+                "Model may have exhausted token budget during thinking phase. "
+                "Falling over to Groq."
+            )
+        log.info(
+            f"Gemini REST call OK — finishReason={finish_reason}, "
+            f"thoughtsTokens={data.get('usageMetadata', {}).get('thoughtsTokenCount', '?')}, "
+            f"outputTokens={data.get('usageMetadata', {}).get('candidatesTokenCount', '?')}"
+        )
+
+    except httpx.TimeoutException as e:
+        raise ProviderError(
+            f"Gemini REST timeout (connect={_GEMINI_CONNECT_TIMEOUT}s / "
+            f"read={_GEMINI_READ_TIMEOUT}s): {e}"
+        )
     except httpx.HTTPStatusError as e:
-        raise ProviderError(f"Gemini API error: {e.response.status_code} {e.response.text[:200]}")
+        status = e.response.status_code
+        body   = e.response.text[:300]
+        if status in (429, 503):
+            raise RateLimitError(
+                f"Gemini quota/capacity (HTTP {status}): "
+                f"{e.response.json().get('error', {}).get('message', body)[:200]}"
+            )
+        raise ProviderError(f"Gemini API HTTP {status}: {body}")
     except (KeyError, IndexError) as e:
         raise ProviderError(f"Gemini unexpected response structure: {e}")
     except Exception as e:
-        raise ProviderError(f"Gemini API error: {e}")
+        raise ProviderError(f"Gemini API error: {type(e).__name__}: {e}")
 
     # ── Parse and validate response ───────────────────────────────────────────
     try:

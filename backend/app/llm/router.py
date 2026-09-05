@@ -12,6 +12,11 @@ Responsibilities:
      The batch NEVER crashes due to LLM unavailability.
   5. Log per-call latency and token counts.
 
+NOTE: Gemini's generateContent endpoint has shown timeout/blocking issues in
+certain network environments — the fast-fail timeout (5 s connect) in
+gemini_provider.py ensures it fails quickly and Groq takes over without
+blocking the reconciliation loop for 20+ seconds.
+
 Circuit breaker state is per-router instance (in-memory).
 For a demo single-worker deployment this is sufficient.
 
@@ -29,7 +34,7 @@ import time
 from typing import Optional, Tuple
 
 from app.llm import gemini_provider, groq_provider
-from app.llm.gemini_provider import ProviderError
+from app.llm.gemini_provider import ProviderError, RateLimitError
 from app.llm.schemas import AdjudicationResponse
 from app.core.config import get_settings
 
@@ -119,6 +124,11 @@ class LLMRouter:
         """
         Attempt provider with retries. Returns (raw_text, result) or None on failure.
         Updates circuit breaker state.
+
+        RateLimitError (HTTP 429/503) breaks the retry loop immediately — there
+        is no point retrying with backoff when the daily/minute quota is fully
+        exhausted.  The circuit breaker is still incremented so persistent
+        quota problems open the breaker after N consecutive failures.
         """
         if circuit.is_open:
             log.info(f"Skipping {name} — circuit breaker is open")
@@ -135,6 +145,16 @@ class LLMRouter:
                 log.info(f"{name} succeeded on attempt {attempt+1} in {elapsed:.2f}s")
                 return raw_text, result
 
+            except RateLimitError as e:
+                # 429 / quota exhausted — skip retries immediately
+                circuit.record_failure()
+                elapsed = time.monotonic() - t0
+                log.warning(
+                    f"{name} rate-limited (attempt {attempt+1}) in {elapsed:.2f}s: {e}. "
+                    "Skipping retries — quota will not reset within the backoff window."
+                )
+                break   # ← exit retry loop, return None, try next provider
+
             except ProviderError as e:
                 circuit.record_failure()
                 elapsed = time.monotonic() - t0
@@ -147,7 +167,7 @@ class LLMRouter:
                     log.info(f"Backing off {wait:.2f}s before retry…")
                     await asyncio.sleep(wait)
 
-        return None   # All retries exhausted
+        return None   # All retries exhausted (or rate-limited)
 
     async def adjudicate(
         self,

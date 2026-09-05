@@ -31,11 +31,14 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
 
     # Gemini model to use
-    gemini_model: str = "gemini-3.6-flash"
-    groq_model: str = "groq/compound-mini"
+    gemini_model: str = "gemini-3.6-flash"    # thinking model, confirmed working
+    groq_model: str = "groq/compound-mini"    # primary Groq model
+    # Secondary Groq model — used automatically when the primary hits its TPD cap.
+    # qwen3.6-27b has a separate daily token quota from compound-mini.
+    groq_fallback_model: str = "qwen/qwen3.6-27b"
 
     # ── LLM router resilience ─────────────────────────────────────────────────
-    llm_timeout_seconds: int = 8
+    llm_timeout_seconds: int = 30   # Groq compound can take up to ~20s; 30 gives headroom
     llm_max_retries: int = 1
     # Circuit breaker: skip a provider after this many consecutive failures
     llm_circuit_breaker_threshold: int = 3
