@@ -98,11 +98,11 @@ async def submit_review(match_id: str, body: ReviewAction):
     if not match:
         raise HTTPException(404, f"Match '{match_id}' not found")
 
-    if match.confidence_band != "review":
+    if match.confidence_band not in ("review", "reject"):
         raise HTTPException(
             400,
-            f"Match is in '{match.confidence_band}' band — only 'review' band matches can be reviewed. "
-            f"Auto-accept matches are already confirmed; reject-band matches are exceptions.",
+            f"Match is in '{match.confidence_band}' band — auto-accept matches are already confirmed. "
+            f"Only 'review' and 'reject' band matches can be adjudicated by a controller.",
         )
 
     if match.review_action is not None:

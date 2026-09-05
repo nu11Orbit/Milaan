@@ -57,8 +57,11 @@ def _get_model():
     global _model
     if _model is None:
         from sentence_transformers import SentenceTransformer
-        log.info("Loading sentence-transformers model all-MiniLM-L6-v2 (first call only)…")
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
+        log.info("Loading sentence-transformers model all-MiniLM-L6-v2…")
+        try:
+            _model = SentenceTransformer("all-MiniLM-L6-v2", local_files_only=True)
+        except Exception:
+            _model = SentenceTransformer("all-MiniLM-L6-v2")
         log.info("Model loaded ✓")
     return _model
 

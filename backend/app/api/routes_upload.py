@@ -266,3 +266,95 @@ async def upload_batch(
             else f"Batch created with {len(parse_errors)} skipped rows. Check parse_errors."
         ),
     )
+
+
+# ── 1-Click Synthetic Evaluation Batch Loader ───────────────────────────────────
+
+@router.post("/batches/sample", response_model=BatchUploadResponse)
+async def load_sample_batch():
+    """
+    1-click loader for the pre-configured synthetic evaluation batch (71 records,
+    15 chaos cases, and ground-truth labels per Build Plan Section 5.3 & 5.4).
+    Enables instant demonstration of full ground-truth precision/recall metrics.
+    """
+    import os
+
+    # Look for evaluation batch in standard paths
+    search_paths = [
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../test_data/evaluation_batch")),
+        os.path.abspath(os.path.join(os.getcwd(), "test_data/evaluation_batch")),
+        os.path.abspath(os.path.join(os.getcwd(), "../test_data/evaluation_batch")),
+    ]
+
+    eval_dir = None
+    for p in search_paths:
+        if os.path.isdir(p) and os.path.exists(os.path.join(p, "bank_statement.csv")):
+            eval_dir = p
+            break
+
+    if not eval_dir:
+        raise HTTPException(404, "Synthetic evaluation batch directory not found on server")
+
+    merchant_id = "MER-SYNTH-EVAL-01"
+    batch_id = f"BATCH-{uuid.uuid4().hex[:10]}"
+
+    with open(os.path.join(eval_dir, "bank_statement.csv"), "r", encoding="utf-8") as fb:
+        bank_reader = csv.DictReader(fb)
+        txns_to_insert = []
+        for row in bank_reader:
+            txn, _ = _parse_txn_row(row, merchant_id)
+            if txn:
+                txn.batch_id = batch_id
+                txns_to_insert.append(txn)
+
+    with open(os.path.join(eval_dir, "invoice_register.csv"), "r", encoding="utf-8") as fi:
+        inv_reader = csv.DictReader(fi)
+        invs_to_insert = []
+        for row in inv_reader:
+            inv, _ = _parse_invoice_row(row, merchant_id)
+            if inv:
+                inv.batch_id = batch_id
+                invs_to_insert.append(inv)
+
+    gt_to_insert = []
+    gt_file = os.path.join(eval_dir, "ground_truth.csv")
+    if os.path.exists(gt_file):
+        with open(gt_file, "r", encoding="utf-8") as fg:
+            gt_reader = csv.DictReader(fg)
+            for row in gt_reader:
+                inv_id = row.get("invoice_id", "").strip()
+                txn_ids_raw = row.get("txn_ids", "").strip()
+                txn_ids = [t.strip() for t in txn_ids_raw.split(",") if t.strip()] if txn_ids_raw else []
+                is_true = row.get("is_true_match", "true").strip().lower() in ("true", "1", "yes")
+                cat = row.get("case_category", "clean").strip()
+                gt_to_insert.append(
+                    GroundTruthLabel(
+                        batch_id=batch_id,
+                        invoice_id=inv_id,
+                        txn_ids=txn_ids,
+                        is_true_match=is_true,
+                        case_category=cat,
+                    )
+                )
+
+    if txns_to_insert:
+        await BankTransaction.insert_many(txns_to_insert)
+    if invs_to_insert:
+        await Invoice.insert_many(invs_to_insert)
+    if gt_to_insert:
+        await GroundTruthLabel.insert_many(gt_to_insert)
+
+    log.info(
+        f"Synthetic benchmark batch {batch_id} loaded: {len(txns_to_insert)} txns, "
+        f"{len(invs_to_insert)} invoices, {len(gt_to_insert)} ground truth labels"
+    )
+
+    return BatchUploadResponse(
+        batch_id=batch_id,
+        merchant_id=merchant_id,
+        txns_loaded=len(txns_to_insert),
+        invoices_loaded=len(invs_to_insert),
+        parse_errors=[],
+        message=f"Synthetic evaluation batch created ({len(txns_to_insert)} txns, {len(invs_to_insert)} invoices, {len(gt_to_insert)} ground truth labels).",
+    )
+

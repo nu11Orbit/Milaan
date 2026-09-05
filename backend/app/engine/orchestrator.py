@@ -565,6 +565,7 @@ async def run_reconciliation(
             event = {
                 "idx": m_idx + 1,
                 "total": total_matches,
+                "match_id": match.match_id,
                 "txn_id": txn_display,
                 "amount": amount_display,
                 "band": match.confidence_band,
