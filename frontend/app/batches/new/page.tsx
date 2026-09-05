@@ -3,17 +3,34 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { uploadBatch, triggerRun } from "@/lib/api";
-import { UploadCloud, AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
+import { uploadBatch, loadSampleBatch, triggerRun } from "@/lib/api";
+import { UploadCloud, AlertCircle, CheckCircle2, ArrowRight, Sparkles, Play } from "lucide-react";
 
 export default function NewBatchPage() {
   const router = useRouter();
   const [merchantId, setMerchantId] = useState("MER-001");
   const [bankFile, setBankFile] = useState<File | null>(null);
   const [invFile, setInvFile] = useState<File | null>(null);
+  const [gtFile, setGtFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingSample, setLoadingSample] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [parseErrors, setParseErrors] = useState<Array<{ errors: Record<string, string[]> }>>([]);
+
+  async function handleLoadSample() {
+    setLoadingSample(true);
+    setError(null);
+    try {
+      const batch = await loadSampleBatch();
+      const run = await triggerRun(batch.batch_id);
+      localStorage.setItem("milaan_last_run", JSON.stringify({ batchId: batch.batch_id, runId: run.run_id }));
+      router.push(`/batches/${batch.batch_id}/run?runId=${run.run_id}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to load synthetic benchmark batch";
+      setError(msg);
+      setLoadingSample(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,11 +46,16 @@ export default function NewBatchPage() {
       fd.append("merchant_id", merchantId);
       fd.append("bank_csv", bankFile);
       fd.append("invoice_csv", invFile);
+      if (gtFile) {
+        fd.append("ground_truth_csv", gtFile);
+      }
       const batch = await uploadBatch(fd);
       if (batch.parse_errors?.length) setParseErrors(batch.parse_errors);
       
       // Trigger reconciliation pipeline run immediately
       const run = await triggerRun(batch.batch_id);
+      // Persist so the header can always link back to this run
+      localStorage.setItem("milaan_last_run", JSON.stringify({ batchId: batch.batch_id, runId: run.run_id }));
       router.push(`/batches/${batch.batch_id}/run?runId=${run.run_id}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Upload failed";
@@ -44,7 +66,7 @@ export default function NewBatchPage() {
   }
 
   return (
-    <div className="w-full min-h-screen bg-[#15120E] text-[#EDE6D6] py-16 px-6 sm:px-12 flex justify-center">
+    <div className="w-full min-h-screen bg-[#15120E] text-[#EDE6D6] pt-28 pb-16 px-6 sm:px-12 flex justify-center">
       <div className="max-w-3xl w-full space-y-10">
         
         {/* Editorial Header */}
@@ -61,6 +83,49 @@ export default function NewBatchPage() {
           <p className="font-body text-base text-[#A69A85] leading-relaxed max-w-2xl">
             Upload your unstructured bank statement and ERP invoice register. Our engine parses Indian ₹ currency structures, Lakhs/Crores digit grouping, and multi-format transaction timestamps.
           </p>
+        </div>
+
+        {/* 1-Click Evaluation Benchmark Banner */}
+        <div
+          className="p-6 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all"
+          style={{
+            background: "linear-gradient(135deg, rgba(46,74,56,0.22) 0%, rgba(180,135,90,0.12) 100%)",
+            border: "1px solid rgba(180,135,90,0.35)",
+            boxShadow: "0 4px 24px rgba(21,18,14,0.4)",
+          }}
+        >
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-[#B4875A]" />
+              <span className="font-mono text-xs font-bold uppercase tracking-wider text-[#EDE6D6]">
+                Official Benchmark Evaluation Batch
+              </span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#2E4A38] text-[#EDE6D6]">
+                71 Records · 15 Chaos Cases
+              </span>
+            </div>
+            <p className="text-xs text-[#A69A85] leading-relaxed max-w-xl">
+              Instant 1-click execution: loads synthetic current-account bank statements, GST/TDS invoices, and ground-truth labels to test all 15 scenarios and compute verified precision &amp; recall.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleLoadSample}
+            disabled={loadingSample || loading}
+            className="btn-primary-forest text-xs px-5 py-3 rounded-xl shrink-0 cursor-pointer disabled:opacity-50 flex items-center gap-2 shadow-lg"
+          >
+            {loadingSample ? (
+              <>
+                <span className="w-3.5 h-3.5 rounded-full border-2 border-[#EDE6D6] border-t-transparent animate-spin" />
+                <span>Loading Batch…</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Run Evaluation Batch</span>
+              </>
+            )}
+          </button>
         </div>
 
         {/* Form Card */}
@@ -119,6 +184,14 @@ export default function NewBatchPage() {
             label="INVOICE REGISTER CSV"
             hint="invoice_id, invoice_date, counterparty_name, base_amount, total_amount, tds_section, tds_amount"
             onChange={setInvFile}
+            accept=".csv"
+          />
+
+          {/* Optional Ground Truth CSV Input */}
+          <FileInput
+            label="GROUND TRUTH LABELS CSV (OPTIONAL — FOR EVALUATION)"
+            hint="invoice_id, txn_ids, is_true_match, case_category — required to compute Precision/Recall"
+            onChange={setGtFile}
             accept=".csv"
           />
 

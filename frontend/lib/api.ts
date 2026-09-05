@@ -21,6 +21,12 @@ export async function uploadBatch(formData: FormData) {
   return res.json();
 }
 
+export async function loadSampleBatch() {
+  const res = await fetch(`${BASE}/api/batches/sample`, { method: "POST" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 // ── Run ───────────────────────────────────────────────────────────────────────
 export function triggerRun(batchId: string) {
   return req<{ batch_id: string; run_id: string; stream_url: string }>(`/api/batches/${batchId}/run`, { method: "POST" });
@@ -138,12 +144,12 @@ export interface CalibrationCurvePoint {
 
 export interface CalibrationResult {
   batch_id: string; run_id: string | null; sample_size: number; is_calibrated: boolean;
-  raw_metrics: { brier_score: number; expected_calibration_error: number };
-  calibrated_metrics: { brier_score: number; expected_calibration_error: number };
-  brier_improvement_pct: number;
-  calibration_curve: CalibrationCurvePoint[];
-  calibrated_curve: CalibrationCurvePoint[];
-  interpretation: string;
+  raw_metrics?: { brier_score: number; expected_calibration_error: number };
+  calibrated_metrics?: { brier_score: number; expected_calibration_error: number };
+  brier_improvement_pct?: number;
+  calibration_curve?: CalibrationCurvePoint[];
+  calibrated_curve?: CalibrationCurvePoint[];
+  interpretation?: string;
 }
 
 export interface IntegrityResult {

@@ -281,3 +281,75 @@
     animation: none !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RUN PAGE — CONFIDENCE BAND PILLS & SURFACE TOKENS
+   All values map strictly to the locked old-money palette.
+═══════════════════════════════════════════════════════════════════════════ */
+
+/* --arctic removed; score column uses --accent-camel instead */
+:root {
+  --arctic: #B4875A; /* remapped: was cyan, now camel */
+}
+
+/* Confidence band pill styles */
+.band-auto {
+  background-color: rgba(60, 107, 76, 0.18);
+  border: 1px solid rgba(60, 107, 76, 0.45);
+  color: #7AAE88;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+}
+
+.band-review {
+  background-color: rgba(199, 154, 69, 0.15);
+  border: 1px solid rgba(199, 154, 69, 0.4);
+  color: #C79A45;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+}
+
+.band-reject {
+  background-color: rgba(163, 76, 63, 0.15);
+  border: 1px solid rgba(163, 76, 63, 0.4);
+  color: #C06050;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+}
+
+/* Warm leather glass panel (replaces generic dark glass) */
+.glass-panel {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-camel);
+  box-shadow: 0 4px 32px -8px rgba(21, 18, 14, 0.6);
+}
+
+/* Primary CTA button for run/results pages */
+.btn-primary-glow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background-color: var(--accent-forest);
+  color: var(--ink-primary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  border: 1px solid rgba(180, 135, 90, 0.35);
+  border-radius: 0.75rem;
+  box-shadow: 0 0 0 1px rgba(46, 74, 56, 0.4), 0 4px 20px -6px rgba(46, 74, 56, 0.45);
+  transition: all 0.2s ease-out;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn-primary-glow:hover {
+  background-color: var(--accent-forest-hover);
+  border-color: var(--accent-camel);
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 1px rgba(180, 135, 90, 0.5), 0 6px 20px -6px rgba(180, 135, 90, 0.35);
+}
