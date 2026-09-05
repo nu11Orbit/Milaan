@@ -23,7 +23,6 @@ export default function NewBatchPage() {
     try {
       const batch = await loadSampleBatch();
       const run = await triggerRun(batch.batch_id);
-      localStorage.setItem("milaan_last_run", JSON.stringify({ batchId: batch.batch_id, runId: run.run_id }));
       router.push(`/batches/${batch.batch_id}/run?runId=${run.run_id}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to load synthetic benchmark batch";
@@ -54,8 +53,6 @@ export default function NewBatchPage() {
       
       // Trigger reconciliation pipeline run immediately
       const run = await triggerRun(batch.batch_id);
-      // Persist so the header can always link back to this run
-      localStorage.setItem("milaan_last_run", JSON.stringify({ batchId: batch.batch_id, runId: run.run_id }));
       router.push(`/batches/${batch.batch_id}/run?runId=${run.run_id}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Upload failed";

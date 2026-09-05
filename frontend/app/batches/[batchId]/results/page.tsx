@@ -15,6 +15,7 @@ import {
   getIntegrity,
   getMatches,
   retryPendingLLM,
+  triggerRun,
   type Metrics,
   type EvalResult,
   type CalibrationResult,
@@ -78,11 +79,12 @@ export default function ResultsPage() {
   const [loading, setLoading] = useState(true);
   const [retrying, setRetrying] = useState(false);
   const [retryResult, setRetryResult] = useState<string | null>(null);
+  const [startingRun, setStartingRun] = useState(false);
 
   const fetchFreshData = useCallback(() => {
     setLoading(true);
     Promise.all([
-      getMetrics(batchId, runId).then(setMetrics),
+      getMetrics(batchId, runId).then(setMetrics).catch(() => setMetrics(null)),
       getEvaluation(batchId, runId).then(setEval).catch(() => {}),
       getCalibration(batchId, runId).then(setCalib).catch(() => {}),
       getIntegrity(batchId).then(setIntegrity).catch(() => {}),
@@ -93,7 +95,7 @@ export default function ResultsPage() {
   useEffect(() => {
     let ignore = false;
     Promise.all([
-      getMetrics(batchId, runId).then((m) => { if (!ignore) setMetrics(m); }),
+      getMetrics(batchId, runId).then((m) => { if (!ignore) setMetrics(m); }).catch(() => { if (!ignore) setMetrics(null); }),
       getEvaluation(batchId, runId).then((e) => { if (!ignore) setEval(e); }).catch(() => {}),
       getCalibration(batchId, runId).then((c) => { if (!ignore) setCalib(c); }).catch(() => {}),
       getIntegrity(batchId).then((i) => { if (!ignore) setIntegrity(i); }).catch(() => {}),
@@ -117,13 +119,48 @@ export default function ResultsPage() {
   }
 
   if (loading) return <Loading />;
-  if (!metrics) return (
-    <div className="pt-28 pb-16 px-4 max-w-6xl mx-auto">
-      <p className="font-mono text-xs" style={{ color: "#C06050" }}>
-        Could not load metrics for this batch.
-      </p>
-    </div>
-  );
+  if (!metrics) {
+    return (
+      <div className="pt-32 pb-16 px-4 max-w-2xl mx-auto text-center space-y-6">
+        <div className="glass-panel p-8 rounded-2xl space-y-4 border border-[rgba(180,135,90,0.22)]">
+          <div className="w-12 h-12 rounded-full mx-auto flex items-center justify-center bg-[rgba(180,135,90,0.15)] text-[#B4875A]">
+            <RotateCcw className="w-6 h-6" />
+          </div>
+          <h2 className="text-xl font-bold font-display" style={{ color: "var(--ink-primary)" }}>
+            Reconciliation Run Not Completed
+          </h2>
+          <p className="text-xs font-mono text-[#A69A85] leading-relaxed">
+            Batch <span className="font-bold text-[#EDE6D6]">{batchId}</span> was created but has no persisted matches yet (the run may have been interrupted or not triggered).
+          </p>
+          <div className="pt-3 flex flex-col sm:flex-row justify-center gap-3">
+            <button
+              disabled={startingRun}
+              onClick={async () => {
+                try {
+                  setStartingRun(true);
+                  const run = await triggerRun(batchId);
+                  window.location.href = `/batches/${batchId}/run?runId=${run.run_id}`;
+                } catch (e) {
+                  setStartingRun(false);
+                  alert("Failed to start run: " + (e instanceof Error ? e.message : "Unknown error"));
+                }
+              }}
+              className="btn-primary-glow text-xs font-mono font-bold px-6 py-3 rounded-xl flex items-center justify-center gap-2"
+            >
+              <span>{startingRun ? "Initiating Pipeline…" : "Run Pipeline Now"}</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+            <Link
+              href="/batches/new"
+              className="btn-secondary-camel text-xs font-mono px-5 py-3 rounded-xl flex items-center justify-center"
+            >
+              Start Fresh Intake
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const bandData = [
     { name: "Auto-Accept", value: metrics.by_confidence_band.auto_accept ?? 0, color: "#3C6B4C" },

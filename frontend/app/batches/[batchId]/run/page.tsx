@@ -131,11 +131,6 @@ export default function RunPage() {
       return;
     }
 
-    // Always keep the header "Last Run" link pointing at this run
-    try {
-      localStorage.setItem("milaan_last_run", JSON.stringify({ batchId, runId }));
-    } catch { /* ignore */ }
-
     let es: EventSource | null = null;
     let isCancelled = false;
     let fallbackPollTimer: NodeJS.Timeout | null = null;
@@ -166,6 +161,10 @@ export default function RunPage() {
           exceptions: mapped.filter((r) => r.band === "reject" || r.band === "exception").length,
           total: mapped.length,
         });
+        // Only persist to "Last Run" once verified matches have been confirmed in DB
+        try {
+          localStorage.setItem("milaan_last_run", JSON.stringify({ batchId, runId }));
+        } catch { /* ignore */ }
         if (fallbackPollTimer) {
           clearInterval(fallbackPollTimer);
           fallbackPollTimer = null;

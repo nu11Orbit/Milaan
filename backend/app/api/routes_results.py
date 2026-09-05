@@ -45,6 +45,8 @@ async def list_matches(
         query = query.find(Match.confidence_band == band)
 
     matches = await query.skip(skip).limit(limit).to_list()
+    if not matches and run_id:
+        matches = await Match.find(Match.batch_id == batch_id).skip(skip).limit(limit).to_list()
 
     return {
         "batch_id":  batch_id,
@@ -121,6 +123,10 @@ async def get_metrics(batch_id: str, run_id: Optional[str] = None):
         query_args.append(Match.run_id == run_id)
 
     matches = await Match.find(*query_args).to_list()
+    if not matches and run_id:
+        # Fallback to any completed run matches for this batch
+        matches = await Match.find(Match.batch_id == batch_id).to_list()
+
     total = len(matches)
     if total == 0:
         raise HTTPException(404, f"No matches found for batch '{batch_id}'")

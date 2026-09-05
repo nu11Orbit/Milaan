@@ -124,6 +124,8 @@ async def compute_metrics(
     if run_id:
         match_query.append(Match.run_id == run_id)
     matches = await Match.find(*match_query).to_list()
+    if not matches and run_id:
+        matches = await Match.find(Match.batch_id == batch_id).to_list()
 
     result.total_predictions = len(matches)
     result.auto_accept_count = sum(1 for m in matches if m.confidence_band == "auto_accept")
