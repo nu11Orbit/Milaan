@@ -74,7 +74,11 @@ class Settings(BaseSettings):
     gateway_fee_gst_rate: float = 0.18
 
     # ── CORS ──────────────────────────────────────────────────────────────────
-    cors_origins: list[str] = ["http://localhost:3000", "https://*.vercel.app"]
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "https://milaan-seven.vercel.app",
+        "https://*.vercel.app",
+    ]
 
     @field_validator("cors_origins", mode="before")
     @classmethod
