@@ -278,10 +278,14 @@ async def load_sample_batch():
     Enables instant demonstration of full ground-truth precision/recall metrics.
     """
     import os
+    import sys
+    from pathlib import Path
 
     # Look for evaluation batch in standard paths
     search_paths = [
         os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../test_data/evaluation_batch")),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/evaluation_batch")),
+        os.path.abspath(os.path.join(os.getcwd(), "data/evaluation_batch")),
         os.path.abspath(os.path.join(os.getcwd(), "test_data/evaluation_batch")),
         os.path.abspath(os.path.join(os.getcwd(), "../test_data/evaluation_batch")),
     ]
@@ -292,8 +296,21 @@ async def load_sample_batch():
             eval_dir = p
             break
 
+    # Dynamic fallback: if CSVs are missing from container disk, generate deterministically on the fly
     if not eval_dir:
-        raise HTTPException(404, "Synthetic evaluation batch directory not found on server")
+        try:
+            backend_dir = Path(__file__).resolve().parent.parent.parent
+            if str(backend_dir) not in sys.path:
+                sys.path.insert(0, str(backend_dir))
+            from data.generate_synthetic_data import SyntheticDatasetBuilder
+            fallback_dir = "/tmp/evaluation_batch"
+            builder = SyntheticDatasetBuilder(seed=42)
+            builder.generate_all()
+            builder.export_csvs(fallback_dir)
+            eval_dir = fallback_dir
+        except Exception as gen_err:
+            log.exception(f"Failed to generate synthetic dataset: {gen_err}")
+            raise HTTPException(404, f"Synthetic evaluation batch files not found: {gen_err}")
 
     merchant_id = "MER-SYNTH-EVAL-01"
     batch_id = f"BATCH-{uuid.uuid4().hex[:10]}"

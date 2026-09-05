@@ -1,0 +1,76 @@
+invoice_id,invoice_date,counterparty_name,base_amount,total_amount,tds_section,tds_amount,expected_net_amount,status
+INV-001,01-08-2026,"Choudhury, Bakshi and Maharaj Enterprises",15000,17700,,0,17700,open
+INV-002,02-08-2026,Kapoor Logistics,24500,28910,,0,28910,open
+INV-003,03-08-2026,"Chaudry, Chahal and Sami Associates",38000,44840,,0,44840,open
+INV-004,04-08-2026,Balan Logistics,52000,61360,,0,61360,open
+INV-005,05-08-2026,Kaul PLC Associates,65000,76700,,0,76700,open
+INV-006,06-08-2026,"Bala, Issac and Saini Trading Co",82000,96760,,0,96760,open
+INV-007,07-08-2026,Sen PLC Trading Co,95000,112100,,0,112100,open
+INV-008,08-08-2026,Ahuja-Dutta Enterprises,110000,129800,,0,129800,open
+INV-009,09-08-2026,"Sami, Oak and Mall Technologies",125000,147500,,0,147500,open
+INV-010,10-08-2026,Kale Associates,140000,165200,,0,165200,open
+INV-011,11-08-2026,Chanda Logistics,175000,206500,,0,206500,open
+INV-012,12-08-2026,Parmer Technologies,190000,224200,,0,224200,open
+INV-013,13-08-2026,"Lalla, Bassi and Sharaf Associates",210000,247800,,0,247800,open
+INV-014,14-08-2026,"Dash, Radhakrishnan and Brar Suppliers",240000,283200,,0,283200,open
+INV-015,15-08-2026,"Memon, Pathak and Handa Trading Co",275000,324500,,0,324500,open
+INV-016,16-08-2026,"Boase, Bath and Kari Industries",310000,365800,,0,365800,open
+INV-017,17-08-2026,Buch-Kaul Pvt Ltd,340000,401200,,0,401200,open
+INV-018,18-08-2026,Rai Associates,380000,448400,,0,448400,open
+INV-019,19-08-2026,Patla-Gaba Logistics,420000,495600,,0,495600,open
+INV-020,20-08-2026,Pant-Kadakia Trading Co,460000,542800,,0,542800,open
+INV-021,21-08-2026,"Loke, Bora and Garg Associates",490000,578200,,0,578200,open
+INV-022,22-08-2026,"Konda, Gade and Shere Logistics",55000,64900,,0,64900,open
+INV-023,23-08-2026,Madan-Kanda Enterprises,72000,84960,,0,84960,open
+INV-024,24-08-2026,"Nair, Bhalla and Karnik Trading Co",135000,159300,,0,159300,open
+INV-025,25-08-2026,Mutti Associates,160000,188800,,0,188800,open
+INV-026,26-08-2026,Bhatti-Kakar Pvt Ltd,225000,265500,,0,265500,open
+INV-027,06-08-2026,"Murty, Kala and Tata Suppliers",18350,21653,,0,21653,open
+INV-028,07-08-2026,Shanker-Dhar Associates,34120,40261.60,,0,40261.60,open
+INV-029,08-08-2026,Dewan-Koshy Pvt Ltd,67890,80110.20,,0,80110.20,open
+INV-030,09-08-2026,"Yohannan, Lall and Sangha Technologies",91450,107911,,0,107911,open
+INV-031,10-08-2026,"Rastogi, Pathak and Kanda Trading Co",145320,171477.60,,0,171477.60,open
+INV-032,11-08-2026,Upadhyay Enterprises,212450,250691,,0,250691,open
+INV-033,12-08-2026,Batta Technologies,389100,459138,,0,459138,open
+INV-034,11-08-2026,Dutta Ltd Logistics,100000,118000,194J,10000,108000,open
+INV-035,12-08-2026,Bhatt-Rajan Trading Co,50000,59000,194J,5000,54000,open
+INV-036,13-08-2026,Sidhu-Wadhwa Pvt Ltd,85000,100300,194C,1700,98600,open
+INV-037,14-08-2026,Apte-Contractor Industries,150000,177000,194J,15000,162000,open
+INV-038,15-08-2026,"Yadav, Loke and Oak Suppliers",200000,236000,194C,4000,232000,open
+INV-039,16-08-2026,Memon Technologies,75000,88500,194J,7500,81000,open
+INV-040,17-08-2026,Setty Logistics,120000,141600,194C,2400,139200,open
+INV-041,16-08-2026,"Lall, Tella and Gokhale Enterprises",60000,60000,,0,60000,open
+INV-042,17-08-2026,"Cherian, Misra and Tripathi Industries",90000,90000,,0,90000,open
+INV-043,18-08-2026,"Issac, Dua and Prakash Trading Co",150000,150000,,0,150000,open
+INV-044,19-08-2026,Zacharia PLC Industries,80000,80000,,0,80000,open
+INV-045,20-08-2026,Naik Trading Co,120000,120000,,0,120000,open
+INV-046,19-08-2026,Choudhury Associates,45000,45000,,0,45000,open
+INV-047,20-08-2026,Choudhury Associates,55000,55000,,0,55000,open
+INV-048,20-08-2026,Khatri-Bhardwaj Logistics,30000,30000,,0,30000,open
+INV-049,21-08-2026,Khatri-Bhardwaj Logistics,40000,40000,,0,40000,open
+INV-050,22-08-2026,Khatri-Bhardwaj Logistics,50000,50000,,0,50000,open
+INV-051,21-08-2026,Brar Logistics,60000,60000,,0,60000,open
+INV-052,22-08-2026,Brar Logistics,85000,85000,,0,85000,open
+INV-053,22-08-2026,"Sunder, Biswas and Walia Technologies",70000,70000,,0,70000,open
+INV-054,23-08-2026,"Sunder, Biswas and Walia Technologies",80000,80000,,0,80000,open
+INV-055,21-08-2026,Dave Ltd Logistics,75000,75000,,0,75000,open
+INV-056,22-08-2026,Gandhi-Lanka Pvt Ltd,110000,110000,,0,110000,open
+INV-057,23-08-2026,"Sampath, Kakar and Zacharia Pvt Ltd",160000,160000,,0,160000,open
+INV-058,24-08-2026,"Iyer, Muni and Rastogi Enterprises",95000,95000,,0,95000,open
+INV-059,23-08-2026,"Prakash, Sarma and Varughese Technologies",50000,50000,,0,50000,open
+INV-060,24-08-2026,Dara-Kota Logistics,80000,80000,,0,80000,open
+INV-061,25-08-2026,Bhatt Industries,120000,120000,,0,120000,open
+INV-062,26-08-2026,Arora Logistics Solutions,48500,48500,,0,48500,open
+INV-063,26-08-2026,Arora Transporters India,48525,48525,,0,48525,open
+INV-064,27-08-2026,Singhal Software Tech,92000,92000,,0,92000,open
+INV-065,27-08-2026,Singhal Infotech Systems,92030,92030,,0,92030,open
+INV-066,29-08-2026,Pooja Textiles Ltd,75000,75000,,0,75000,open
+INV-067,29-08-2026,Karan Enterprises,75000,75000,,0,75000,open
+INV-068,02-08-2026,Karpe PLC Pvt Ltd,42000,49560,,0,49560,open
+INV-069,03-08-2026,Amble Enterprises,88000,103840,,0,103840,open
+INV-070,04-08-2026,"Bhargava, Karnik and Bir Suppliers",130000,153400,,0,153400,open
+INV-071,03-08-2026,Narayanan Enterprises,32000,37760,,0,37760,open
+INV-072,04-08-2026,"Khanna, Mallick and Sunder Logistics",64000,75520,,0,75520,open
+INV-073,05-08-2026,Zacharia Trading Co,115000,135700,,0,135700,open
+INV-074,06-08-2026,"Solanki, Kibe and Solanki Technologies",280000,330400,,0,330400,open
+INV-075,25-08-2026,Oberoi Logistics Group,68000,68000,,0,68000,open

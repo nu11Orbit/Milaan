@@ -4,7 +4,9 @@ export const API_BASE_URL = (
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
   "http://127.0.0.1:8000"
-).replace(/\/+$/, "");
+)
+  .replace(/\/+$/, "")
+  .replace("milaan-804z", "milaan-8o4z"); // Auto-corrects 804z (digit zero) to 8o4z (letter o)
 
 const BASE = API_BASE_URL;
 

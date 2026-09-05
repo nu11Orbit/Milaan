@@ -87,7 +87,49 @@ export default function RunPage() {
   };
 
   useEffect(() => {
-    if (!runId) return;
+    if (!batchId || batchId === "sample") {
+      setStatus("error");
+      setErrorMsg("Invalid or missing batch identifier. Please start a new reconciliation intake.");
+      return;
+    }
+
+    if (!runId) {
+      // Fallback: check if the batch has existing persisted matches
+      getMatches(batchId)
+        .then((res) => {
+          if (res.matches && res.matches.length > 0) {
+            const mapped: SseRecord[] = res.matches.map((m, i) => ({
+              idx: i + 1,
+              total: res.matches.length,
+              match_id: m.match_id,
+              txn_id: m.line_items.find((li) => li.txn_id)?.txn_id ?? `TXN-${i + 1}`,
+              amount: m.line_items.reduce((s, li) => s + (Number(li.allocated_amount) || 0), 0).toFixed(2),
+              band: m.confidence_band,
+              score: m.confidence_score,
+              match_type: m.match_type,
+              invoices: m.line_items.filter((li) => li.invoice_id).map((li) => li.invoice_id!),
+              explanation: m.explanation_text ?? undefined,
+            }));
+            setRecords(mapped);
+            setStatus("completed");
+            setDone({
+              done: true,
+              auto_accept: mapped.filter((r) => r.band === "auto_accept").length,
+              review: mapped.filter((r) => r.band === "review").length,
+              exceptions: mapped.filter((r) => r.band === "reject" || r.band === "exception").length,
+              total: mapped.length,
+            });
+          } else {
+            setStatus("error");
+            setErrorMsg("No active Run ID specified. Please launch a run from the intake screen.");
+          }
+        })
+        .catch(() => {
+          setStatus("error");
+          setErrorMsg("No active Run ID specified. Please launch a run from the intake screen.");
+        });
+      return;
+    }
 
     // Always keep the header "Last Run" link pointing at this run
     try {
