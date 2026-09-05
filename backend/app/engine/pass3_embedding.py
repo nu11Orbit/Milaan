@@ -137,6 +137,14 @@ def run_pass3(
     if settings is None:
         settings = get_settings()
 
+    # Skip entirely when embeddings are disabled (e.g. Render free tier 512MB RAM)
+    if not settings.enable_embeddings:
+        log.info("Pass 3 skipped: ENABLE_EMBEDDINGS=false")
+        for cm in candidates:
+            if cm.resolved_by is None:
+                cm.add("pass3_embedding", 0.0, "Embeddings disabled on this host", fired=False)
+        return candidates
+
     floor      = settings.embedding_similarity_floor
     top_k      = settings.embedding_top_k
 
@@ -225,5 +233,10 @@ def preload_model() -> None:
     Eagerly load the embedding model.
     Call this from the FastAPI lifespan if you want the model warm
     before the first reconciliation request arrives.
+    Skipped automatically when ENABLE_EMBEDDINGS=false.
     """
+    settings = get_settings()
+    if not settings.enable_embeddings:
+        log.info("Embedding model preload skipped: ENABLE_EMBEDDINGS=false")
+        return
     _get_model()

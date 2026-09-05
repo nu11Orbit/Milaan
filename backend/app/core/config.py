@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # Pass 3 embedding: cosine similarity floor
     embedding_similarity_floor: float = 0.5
     embedding_top_k: int = 5
+    # Set ENABLE_EMBEDDINGS=false on low-memory hosts (e.g. Render free 512MB)
+    # to skip sentence-transformers / torch entirely — Pass 3 is bypassed gracefully.
+    enable_embeddings: bool = True
 
     # Pass 4 split matcher: max candidate pool before flagging for LLM
     split_pool_max_size: int = 16
