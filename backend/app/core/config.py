@@ -39,10 +39,12 @@ class Settings(BaseSettings):
     groq_fallback_model: str = "qwen/qwen3.6-27b"
 
     # ── LLM router resilience ─────────────────────────────────────────────────
-    llm_timeout_seconds: int = 30   # Groq compound can take up to ~20s; 30 gives headroom
-    llm_max_retries: int = 1
+    llm_timeout_seconds: int = 8    # Fast-fail: rate-limit errors fire in <1s; 8s covers real calls
+    llm_max_retries: int = 0        # No retries — rate-limits won't clear within backoff window
     # Circuit breaker: skip a provider after this many consecutive failures
     llm_circuit_breaker_threshold: int = 3
+    # Set ENABLE_LLM=false to skip Pass 5 entirely (pure Fellegi-Sunter + rules)
+    enable_llm: bool = True
 
     # ── Confidence band thresholds (all adjustable via /api/config/thresholds) ─
     threshold_auto_accept: float = 85.0   # score >= this → auto_accept

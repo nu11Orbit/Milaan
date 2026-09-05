@@ -33,7 +33,7 @@ import logging
 import uuid
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import AsyncGenerator, Dict, List, Optional, Set
+from typing import AsyncGenerator, Dict, List, Optional, Set, Tuple
 
 from app.core.config import get_settings
 from app.engine import candidate_filter
@@ -328,7 +328,7 @@ async def _match_one_txn(
 
     # ── Pass 5 (LLM) ──────────────────────────────────────────────────────────
     llm_response, llm_provider, llm_raw, both_rate_limited = None, "none", "", False
-    if should_run_pass5(top, req_review, flagged, settings):
+    if settings.enable_llm and should_run_pass5(top, req_review, flagged, settings):
         inv_for_llm = inv_map.get(top.invoice_id)
         if inv_for_llm:
             llm_response, llm_provider, llm_raw, both_rate_limited = await run_pass5(
@@ -461,34 +461,28 @@ async def run_reconciliation(
     router   = LLMRouter(settings)
     fs_model = FSModel()   # Fellegi-Sunter model — shared across all txns in this batch
 
-    # ── Load FS probability estimates from labeled data (if available) ─────────
+    # ── Load FS probability estimates from labeled data (if available) ────────
     try:
         from app.models.ground_truth_label import GroundTruthLabel
         labels = await GroundTruthLabel.find(
             GroundTruthLabel.batch_id == batch_id
         ).to_list()
         if labels:
-            # Build signal dicts for true and false pairs from ground truth
-            # We approximate here: true_match labels → true_signals, rest → false
-            # Full estimation requires running compare() on each labeled pair
-            # (deferred to post-run analytics for simplicity)
             log.info(f"FS model: found {len(labels)} labels for batch {batch_id} (priors used for now)")
     except Exception as e:
         log.debug(f"FS label loading skipped: {e}")
 
-    # ── Idempotency: purge previous run matches ─────────────────────────────
+    # ── Idempotency: purge previous run matches ───────────────────────────────
     await Match.find(
         Match.batch_id == batch_id,
         Match.run_id   == run_id,
     ).delete()
 
-    # ── Build views ──────────────────────────────────────────────────────────
+    # ── Build views ──────────────────────────────────────────────────
     txn_views = [_txn_to_view(t) for t in txn_docs]
     inv_views = [_invoice_to_view(i) for i in invoice_docs]
     inv_map   = {iv.invoice_id: iv for iv in inv_views}
-    # ── Sort txns: larger amounts first for greedy assignment ─────────────────
-    # Tie-break deterministically on (txn_date asc, txn_id asc).
-    # This guarantees canonical "first-seen" priority for duplicate pairs (e.g. TXN-076 vs TXN-077).
+    # ── Sort txns: larger amounts first for greedy assignment ────────────────────
     txn_views.sort(key=lambda t: (-t.amount, t.txn_date, t.txn_id))
 
     claimed_txns: Set[str] = set()
@@ -497,6 +491,8 @@ async def run_reconciliation(
     all_candidate_scores: Dict[Tuple[str, str], float] = {}
 
     total_txns = len(txn_views)
+    # Estimated total for SSE progress (refined after Hungarian)
+    estimated_total = total_txns
 
     for idx, txn_view in enumerate(txn_views):
         if txn_view.txn_id in claimed_txns:
@@ -529,6 +525,37 @@ async def run_reconciliation(
                 if li.invoice_id:
                     claimed_invoices.add(li.invoice_id)
 
+        # ── Emit live SSE event immediately after each txn is resolved ───────────
+        # This makes the frontend stream records live instead of waiting for
+        # the entire batch + Hungarian to complete.
+        if sse_queue:
+            txns_in_match = sorted(list(set(li.txn_id for li in match.line_items if li.txn_id)))
+            txn_display = " + ".join(txns_in_match) if len(txns_in_match) > 1 else txn_view.txn_id
+            amount_display = (
+                str(sum(li.allocated_amount for li in match.line_items if li.allocated_amount))
+                if len(txns_in_match) > 1
+                else str(txn_view.amount)
+            )
+            invs_in_match: list[str] = []
+            for li in match.line_items:
+                if li.invoice_id and li.invoice_id not in invs_in_match:
+                    invs_in_match.append(li.invoice_id)
+
+            # Use current length as preliminary index; total is an estimate
+            event = {
+                "idx": len(pending_matches),
+                "total": estimated_total,   # refined after Hungarian
+                "match_id": match.match_id,
+                "txn_id": txn_display,
+                "amount": amount_display,
+                "band": match.confidence_band,
+                "score": match.confidence_score,
+                "match_type": match.match_type,
+                "invoices": invs_in_match,
+                "explanation": match.explanation_text or "",
+            }
+            await sse_queue.put(_sse_event(event))
+
     # ── Hungarian Global Bipartite Optimization ──────────────────────────────
     pending_matches, hungarian_audits = apply_hungarian_to_batch(
         pending_matches=pending_matches,
@@ -538,7 +565,7 @@ async def run_reconciliation(
 
     total_matches = len(pending_matches)
 
-    # ── Persist matches + write audit logs + stream SSE events ────────────────
+    # ── Persist matches + write audit logs ───────────────────────────────────
     auto_accept_count = review_count = reject_count = 0
 
     for m_idx, (match, top, cr, llm_prov, llm_raw, txn_view) in enumerate(pending_matches):
@@ -550,31 +577,6 @@ async def run_reconciliation(
             review_count += 1
         else:
             reject_count += 1
-
-        # SSE event per finalized match record
-        if sse_queue:
-            txns_in_match = sorted(list(set(li.txn_id for li in match.line_items if li.txn_id)))
-            txn_display = " + ".join(txns_in_match) if len(txns_in_match) > 1 else txn_view.txn_id
-            amount_display = str(sum(li.allocated_amount for li in match.line_items if li.allocated_amount)) if len(txns_in_match) > 1 else str(txn_view.amount)
-
-            invs_in_match: list[str] = []
-            for li in match.line_items:
-                if li.invoice_id and li.invoice_id not in invs_in_match:
-                    invs_in_match.append(li.invoice_id)
-
-            event = {
-                "idx": m_idx + 1,
-                "total": total_matches,
-                "match_id": match.match_id,
-                "txn_id": txn_display,
-                "amount": amount_display,
-                "band": match.confidence_band,
-                "score": match.confidence_score,
-                "match_type": match.match_type,
-                "invoices": invs_in_match,
-                "explanation": match.explanation_text or "",
-            }
-            await sse_queue.put(_sse_event(event))
 
         # Audit: engine passes
         if top and cr:
@@ -628,7 +630,7 @@ async def run_reconciliation(
             reasoning=reasoning,
         )
 
-    # ── SSE: finalize ──────────────────────────────────────────────────────────
+    # ── SSE: finalize ───────────────────────────────────────────────────────
     if sse_queue:
         await sse_queue.put(_sse_event({
             "done": True,

@@ -186,6 +186,12 @@ class LLMRouter:
         failed due to quota/rate-limit (not returned for genuine insufficient_evidence).
         The caller sets pending_llm_enrichment=True on the Match in this case.
         """
+        # ── Fast-path: skip all network calls if both breakers already open ────
+        if self._cb_gemini.is_open and self._cb_groq.is_open:
+            log.debug("Both circuit breakers open — skipping LLM calls immediately")
+            fallback = AdjudicationResponse.fallback_no_llm("Both circuit breakers open")
+            return fallback, "fallback_no_llm", "", True
+
         # ── Primary: Gemini ────────────────────────────────────────────────────
         result = await self._try_provider(
             "gemini", gemini_provider.call, self._cb_gemini,
@@ -209,3 +215,4 @@ class LLMRouter:
         fallback = AdjudicationResponse.fallback_no_llm("Both Gemini and Groq providers failed")
         # both_rate_limited=True → orchestrator will set pending_llm_enrichment on the Match
         return fallback, "fallback_no_llm", "", True
+
