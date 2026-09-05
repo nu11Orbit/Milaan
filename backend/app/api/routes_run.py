@@ -98,15 +98,34 @@ async def _run_in_background(batch_id: str, run_id: str, queue: asyncio.Queue):
 # ── SSE stream ────────────────────────────────────────────────────────────────
 
 async def _sse_generator(run_id: str) -> AsyncGenerator[str, None]:
+    import json
+    # 1. Immediately yield connection event so HTTP 200 headers flush to client & proxy
+    yield f"data: {json.dumps({'status': 'connected', 'run_id': run_id, 'message': 'Streaming connection established'})}\n\n"
+
     queue = _sse_queues.get(run_id)
     if queue is None:
-        yield "data: {\"error\": \"Run not found\"}\n\n"
+        # If run already completed before stream connected, replay matches from DB
+        matches = await Match.find(Match.run_id == run_id).to_list()
+        if matches:
+            for m_idx, m in enumerate(matches):
+                invs = [li.invoice_id for li in m.line_items if li.invoice_id]
+                txn_id = m.line_items[0].txn_id if m.line_items and m.line_items[0].txn_id else f"TXN-{m_idx+1}"
+                amount = str(sum(li.allocated_amount for li in m.line_items if li.allocated_amount))
+                yield f"data: {json.dumps({'idx': m_idx + 1, 'total': len(matches), 'match_id': m.match_id, 'txn_id': txn_id, 'amount': amount, 'band': m.confidence_band, 'score': m.confidence_score, 'match_type': m.match_type, 'invoices': invs, 'explanation': m.explanation_text or ''})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'total': len(matches), 'auto_accept': len([m for m in matches if m.confidence_band == 'auto_accept']), 'review': len([m for m in matches if m.confidence_band == 'review']), 'exceptions': len([m for m in matches if m.confidence_band in ('reject', 'exception')])})}\n\n"
+            return
+        yield f"data: {json.dumps({'error': 'Run not found or completed', 'done': True, 'total': 0})}\n\n"
         return
 
     while True:
-        item = await queue.get()
+        try:
+            item = await asyncio.wait_for(queue.get(), timeout=3.0)
+        except asyncio.TimeoutError:
+            # Heartbeat comment to keep Render / Cloudflare proxy connection warm
+            yield ": keepalive\n\n"
+            continue
+
         if item is None:
-            # Run complete — clean up
             _sse_queues.pop(run_id, None)
             break
         yield item
@@ -123,8 +142,12 @@ async def stream_run(batch_id: str, run_id: str):
         _sse_generator(run_id),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",   # disable Nginx buffering for SSE
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",   # disable Nginx/Cloudflare buffering
+            "Access-Control-Allow-Origin": "https://milaan-seven.vercel.app",
+            "Access-Control-Allow-Credentials": "true",
         },
     )
 

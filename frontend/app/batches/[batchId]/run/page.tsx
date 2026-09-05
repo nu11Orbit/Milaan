@@ -139,141 +139,104 @@ export default function RunPage() {
     let es: EventSource | null = null;
     let isCancelled = false;
 
-    // First check if this run already has matches persisted in the database
-    getMatches(batchId, runId)
-      .then((res) => {
-        if (isCancelled) return;
-        if (res.matches && res.matches.length > 0) {
-          const mapped: SseRecord[] = res.matches.map((m, i) => ({
-            idx: i + 1,
-            total: res.matches.length,
-            match_id: m.match_id,
-            txn_id: m.line_items.find((li) => li.txn_id)?.txn_id ?? `TXN-${i + 1}`,
-            amount: m.line_items.reduce((s, li) => s + (Number(li.allocated_amount) || 0), 0).toFixed(2),
-            band: m.confidence_band,
-            score: m.confidence_score,
-            match_type: m.match_type,
-            invoices: m.line_items.filter((li) => li.invoice_id).map((li) => li.invoice_id!),
-            explanation: m.explanation_text ?? undefined,
-          }));
-          setRecords(mapped);
-          setStatus("completed");
-          setDone({
-            done: true,
-            auto_accept: mapped.filter((r) => r.band === "auto_accept").length,
-            review: mapped.filter((r) => r.band === "review").length,
-            exceptions: mapped.filter((r) => r.band === "reject" || r.band === "exception").length,
-            total: mapped.length,
-          });
-          return;
-        }
-        connectSse();
-      })
-      .catch(() => {
-        if (!isCancelled) connectSse();
-      });
+    // 1. Immediately initiate SSE stream connection without blocking on getMatches
+    connectSse();
+
+    // 2. Concurrently check if run already finished, and poll every 3s as a robust fallback
+    const pollMatches = () => {
+      getMatches(batchId, runId)
+        .then((res) => {
+          if (isCancelled) return;
+          if (res.matches && res.matches.length > 0) {
+            const mapped: SseRecord[] = res.matches.map((m, i) => ({
+              idx: i + 1,
+              total: res.matches.length,
+              match_id: m.match_id,
+              txn_id: m.line_items.find((li) => li.txn_id)?.txn_id ?? `TXN-${i + 1}`,
+              amount: m.line_items.reduce((s, li) => s + (Number(li.allocated_amount) || 0), 0).toFixed(2),
+              band: m.confidence_band,
+              score: m.confidence_score,
+              match_type: m.match_type,
+              invoices: m.line_items.filter((li) => li.invoice_id).map((li) => li.invoice_id!),
+              explanation: m.explanation_text ?? undefined,
+            }));
+            setRecords(mapped);
+            setStatus("completed");
+            setDone({
+              done: true,
+              auto_accept: mapped.filter((r) => r.band === "auto_accept").length,
+              review: mapped.filter((r) => r.band === "review").length,
+              exceptions: mapped.filter((r) => r.band === "reject" || r.band === "exception").length,
+              total: mapped.length,
+            });
+            clearInterval(pollInterval);
+            es?.close();
+          }
+        })
+        .catch(() => {});
+    };
+
+    // Run initial check and start 3s poll interval
+    pollMatches();
+    const pollInterval = setInterval(pollMatches, 3000);
 
     function connectSse() {
-      es = new EventSource(`${BASE}/api/batches/${batchId}/run/${runId}/stream`);
+      try {
+        es = new EventSource(`${BASE}/api/batches/${batchId}/run/${runId}/stream`);
 
-      es.onopen = () => {
-        setStatus("streaming");
-      };
+        es.onopen = () => {
+          if (!isCancelled) setStatus("streaming");
+        };
 
-      es.onmessage = (evt) => {
-        try {
-          const data = JSON.parse(evt.data);
-          if (data.error) {
-            // Check fallback from DB before erroring
-            getMatches(batchId, runId).then((res) => {
-              if (res.matches && res.matches.length > 0) {
-                const mapped: SseRecord[] = res.matches.map((m, i) => ({
-                  idx: i + 1,
-                  total: res.matches.length,
-                  match_id: m.match_id,
-                  txn_id: m.line_items.find((li) => li.txn_id)?.txn_id ?? `TXN-${i + 1}`,
-                  amount: m.line_items.reduce((s, li) => s + (Number(li.allocated_amount) || 0), 0).toFixed(2),
-                  band: m.confidence_band,
-                  score: m.confidence_score,
-                  match_type: m.match_type,
-                  invoices: m.line_items.filter((li) => li.invoice_id).map((li) => li.invoice_id!),
-                  explanation: m.explanation_text ?? undefined,
-                }));
-                setRecords(mapped);
-                setStatus("completed");
-                setDone({
-                  done: true,
-                  auto_accept: mapped.filter((r) => r.band === "auto_accept").length,
-                  review: mapped.filter((r) => r.band === "review").length,
-                  exceptions: mapped.filter((r) => r.band === "reject" || r.band === "exception").length,
-                  total: mapped.length,
-                });
-              } else {
-                setErrorMsg(data.error_message ?? data.error ?? "Reconciliation run encountered an issue.");
-                setStatus("error");
-              }
-            });
-            es?.close();
-            return;
-          }
+        es.onmessage = (evt) => {
+          if (isCancelled) return;
+          try {
+            const data = JSON.parse(evt.data);
 
-          if (data.done) {
-            setDone(data as DoneEvent);
-            setStatus("completed");
-            es?.close();
-            return;
-          }
+            if (data.status === "connected") {
+              setStatus("streaming");
+              return;
+            }
 
-          if (data.txn_id) {
-            setRecords((prev) => [...prev, data as SseRecord]);
-          }
-        } catch { /* ignore malformed lines */ }
-      };
+            if (data.error) {
+              pollMatches();
+              es?.close();
+              return;
+            }
 
-      es.onerror = () => {
-        getMatches(batchId, runId)
-          .then((res) => {
-            if (res.matches && res.matches.length > 0) {
-              const mapped: SseRecord[] = res.matches.map((m, i) => ({
-                idx: i + 1,
-                total: res.matches.length,
-                match_id: m.match_id,
-                txn_id: m.line_items.find((li) => li.txn_id)?.txn_id ?? `TXN-${i + 1}`,
-                amount: m.line_items.reduce((s, li) => s + (Number(li.allocated_amount) || 0), 0).toFixed(2),
-                band: m.confidence_band,
-                score: m.confidence_score,
-                match_type: m.match_type,
-                invoices: m.line_items.filter((li) => li.invoice_id).map((li) => li.invoice_id!),
-                explanation: m.explanation_text ?? undefined,
-              }));
-              setRecords(mapped);
+            if (data.done) {
+              setDone(data as DoneEvent);
               setStatus("completed");
-              setDone({
-                done: true,
-                auto_accept: mapped.filter((r) => r.band === "auto_accept").length,
-                review: mapped.filter((r) => r.band === "review").length,
-                exceptions: mapped.filter((r) => r.band === "reject" || r.band === "exception").length,
-                total: mapped.length,
-              });
-            } else {
-              setStatus((prev) => {
-                if (prev === "connecting") {
-                  setErrorMsg("Could not connect to live run telemetry stream.");
+              clearInterval(pollInterval);
+              es?.close();
+              return;
+            }
+
+            if (data.txn_id) {
+              setStatus("streaming");
+              setRecords((prev) => {
+                // Deduplicate by match_id or txn_id
+                if (prev.some((r) => r.match_id === data.match_id || (r.txn_id === data.txn_id && r.idx === data.idx))) {
+                  return prev;
                 }
-                return "error";
+                return [...prev, data as SseRecord];
               });
             }
-          })
-          .catch(() => {
-            setStatus("error");
-            setErrorMsg("Could not connect to live run telemetry stream.");
-          });
-        es?.close();
-      };
+          } catch { /* ignore malformed lines / comments */ }
+        };
+
+        es.onerror = () => {
+          // If SSE connection disconnects, poll DB directly
+          pollMatches();
+        };
+      } catch (err) {
+        pollMatches();
+      }
     }
 
     return () => {
       isCancelled = true;
+      clearInterval(pollInterval);
       es?.close();
     };
   }, [batchId, runId]);
