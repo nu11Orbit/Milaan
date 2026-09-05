@@ -60,9 +60,10 @@ class Settings(BaseSettings):
     # Pass 3 embedding: cosine similarity floor
     embedding_similarity_floor: float = 0.5
     embedding_top_k: int = 5
-    # Set ENABLE_EMBEDDINGS=false on low-memory hosts (e.g. Render free 512MB)
-    # to skip sentence-transformers / torch entirely — Pass 3 is bypassed gracefully.
-    enable_embeddings: bool = True
+    # Set ENABLE_SEMANTIC_EMBEDDING=false to skip Pass 3 on memory-constrained
+    # deployments (e.g. Render free tier 512MB). Pass 3 records fall through to
+    # Pass 4/5 — consistent with the existing graceful-degradation pattern.
+    enable_semantic_embedding: bool = True
 
     # Pass 4 split matcher: max candidate pool before flagging for LLM
     split_pool_max_size: int = 16
