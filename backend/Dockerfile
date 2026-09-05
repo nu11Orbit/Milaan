@@ -20,9 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python -c "\
 from sentence_transformers import SentenceTransformer; \
 print('Downloading embedding model...'); \
-m = SentenceTransformer('all-MiniLM-L6-v2'); \
-print('Model cached at:', m._model_card_data); \
-print('Done.')"
+SentenceTransformer('all-MiniLM-L6-v2'); \
+print('Model cached successfully.')"
 
 # ── Step 4: Copy application code ────────────────────────────────────────────
 COPY . .
