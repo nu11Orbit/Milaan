@@ -157,7 +157,7 @@ async def _sse_generator(run_id: str) -> AsyncGenerator[str, None]:
 
         stream.notifier.clear()
         try:
-            await asyncio.wait_for(stream.notifier.wait(), timeout=3.0)
+            await asyncio.wait_for(stream.notifier.wait(), timeout=1.5)
         except asyncio.TimeoutError:
             # Heartbeat comment to keep Render / Cloudflare proxy connection warm
             yield ": keepalive\n\n"
@@ -178,8 +178,6 @@ async def stream_run(batch_id: str, run_id: str):
             "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",   # disable Nginx/Cloudflare buffering
-            "Access-Control-Allow-Origin": "https://milaan-seven.vercel.app",
-            "Access-Control-Allow-Credentials": "true",
         },
     )
 

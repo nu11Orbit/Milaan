@@ -4,7 +4,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { getMatches, getRunStatus, API_BASE_URL } from "@/lib/api";
+import { getMatches, getRunStatus, triggerRun, API_BASE_URL } from "@/lib/api";
 import {
   Activity,
   CheckCircle2,
@@ -174,14 +174,39 @@ export default function RunPage() {
     };
 
     // Polling fallback checks run status (only completes when backend status is "complete")
+    let pollFailCount = 0;
     const pollRunStatus = async () => {
       try {
         const statusRes = await getRunStatus(batchId, runId);
         if (isCancelled) return;
         if (statusRes.status === "complete") {
           await syncFinalMatches();
+          return;
         }
-      } catch { /* ignore */ }
+        if (statusRes.status === "not_found") {
+          pollFailCount++;
+          if (pollFailCount >= 6) {
+            if (fallbackPollTimer) {
+              clearInterval(fallbackPollTimer);
+              fallbackPollTimer = null;
+            }
+            setStatus("error");
+            setErrorMsg("Reconciliation pipeline run was interrupted or timed out. Click below to restart.");
+          }
+        } else {
+          pollFailCount = 0;
+        }
+      } catch {
+        pollFailCount++;
+        if (pollFailCount >= 6) {
+          if (fallbackPollTimer) {
+            clearInterval(fallbackPollTimer);
+            fallbackPollTimer = null;
+          }
+          setStatus("error");
+          setErrorMsg("Could not establish connection to reconciliation engine.");
+        }
+      }
     };
 
     // Check once on mount if the run has already finished
@@ -220,8 +245,26 @@ export default function RunPage() {
             }
 
             if (data.error) {
-              // If stream reports error, check if the run actually finished
-              pollRunStatus();
+              if (data.error_message) {
+                setErrorMsg(data.error_message);
+              }
+              // Check if any matches were saved before marking complete or error
+              getMatches(batchId, runId).then((res) => {
+                if (res.matches && res.matches.length > 0) {
+                  syncFinalMatches();
+                } else {
+                  setStatus("error");
+                  setErrorMsg(data.error_message || "Reconciliation pipeline reported an error.");
+                  if (fallbackPollTimer) {
+                    clearInterval(fallbackPollTimer);
+                    fallbackPollTimer = null;
+                  }
+                  es?.close();
+                }
+              }).catch(() => {
+                setStatus("error");
+                setErrorMsg(data.error_message || "Reconciliation pipeline reported an error.");
+              });
               return;
             }
 
@@ -388,17 +431,37 @@ export default function RunPage() {
           </div>
         )}
 
-        {status === "error" && errorMsg && (
+        {status === "error" && (
           <div
-            className="flex items-start gap-3 mt-4 pt-4 text-xs font-mono"
+            className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-4 pt-4 text-xs font-mono"
             style={{ borderTop: "1px solid rgba(163,76,63,0.2)" }}
           >
-            <XCircle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--signal-exception)" }} />
-            <div className="space-y-1">
-              <p className="font-semibold" style={{ color: "var(--signal-exception)" }}>Run crashed — no records were processed</p>
-              <p style={{ color: "var(--ink-muted)" }}>{errorMsg}</p>
-              <p style={{ color: "var(--ink-muted)", opacity: 0.7 }}>The Decimal128 fix has been applied. Start a new run to reprocess this batch.</p>
+            <div className="flex items-start gap-3">
+              <XCircle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--signal-exception)" }} />
+              <div className="space-y-1">
+                <p className="font-semibold" style={{ color: "var(--signal-exception)" }}>
+                  Pipeline Interrupted
+                </p>
+                <p style={{ color: "var(--ink-muted)" }}>{errorMsg || "The pipeline connection was interrupted."}</p>
+              </div>
             </div>
+            <button
+              onClick={async () => {
+                try {
+                  setStatus("connecting");
+                  setErrorMsg(null);
+                  const newRun = await triggerRun(batchId);
+                  window.location.href = `/batches/${batchId}/run?runId=${newRun.run_id}`;
+                } catch (e) {
+                  setStatus("error");
+                  setErrorMsg(e instanceof Error ? e.message : "Failed to restart pipeline");
+                }
+              }}
+              className="btn-primary-forest text-xs font-mono font-bold px-4 py-2 rounded-xl flex items-center gap-2 shrink-0 self-start sm:self-auto shadow-md"
+            >
+              <span>Restart Pipeline</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
           </div>
         )}
       </div>

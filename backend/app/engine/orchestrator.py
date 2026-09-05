@@ -39,7 +39,7 @@ from app.core.config import get_settings
 from app.engine import candidate_filter
 from app.engine.pass1_rules import run_pass1
 from app.engine.pass2_fuzzy import run_pass2
-from app.engine.pass3_embedding import run_pass3
+from app.engine.pass3_embedding import precompute_invoice_embeddings, run_pass3
 from app.engine.pass4_split_matcher import (
     SplitMatchResult,
     detect_duplicate_txn,
@@ -157,6 +157,7 @@ async def _match_one_txn(
     claimed_txns: Optional[Set[str]] = None,
     fs_model: Optional[FSModel] = None,
     candidate_scores_collector: Optional[Dict[Tuple[str, str], float]] = None,
+    invoice_embeddings_cache: Optional[Dict[str, Any]] = None,
 ) -> Optional[Match]:
     """
     Run the full 5-pass pipeline for one transaction.
@@ -237,7 +238,10 @@ async def _match_one_txn(
     candidates = run_pass1(txn_view, narrow)
     candidates = run_pass2(txn_view, candidates, narrow_map)
     if any(c.resolved_by is None for c in candidates):
-        candidates = run_pass3(txn_view, candidates, narrow_map, settings)
+        candidates = run_pass3(
+            txn_view, candidates, narrow_map, settings,
+            invoice_embeddings_cache=invoice_embeddings_cache,
+        )
 
     if candidate_scores_collector is not None:
         for c in candidates:
@@ -327,7 +331,7 @@ async def _match_one_txn(
 
     # ── Pass 5 (LLM) ──────────────────────────────────────────────────────────
     llm_response, llm_provider, llm_raw, both_rate_limited = None, "none", "", False
-    if settings.enable_llm and should_run_pass5(top, req_review, flagged, settings):
+    if settings.enable_llm and should_run_pass5(top, req_review, flagged, settings, router=router):
         inv_for_llm = inv_map.get(top.invoice_id)
         if inv_for_llm:
             llm_response, llm_provider, llm_raw, both_rate_limited = await run_pass5(
@@ -493,6 +497,9 @@ async def run_reconciliation(
     # Estimated total for SSE progress (refined after Hungarian)
     estimated_total = total_txns
 
+    # ── Precompute invoice embeddings once for the batch (Pass 3 speedup) ───────
+    inv_embeddings_cache = precompute_invoice_embeddings(inv_views, settings)
+
     for idx, txn_view in enumerate(txn_views):
         if txn_view.txn_id in claimed_txns:
             log.info(f"Skipping {txn_view.txn_id} — already resolved in multi-transaction split match")
@@ -506,6 +513,7 @@ async def run_reconciliation(
             claimed_txns=claimed_txns,
             fs_model=fs_model,
             candidate_scores_collector=all_candidate_scores,
+            invoice_embeddings_cache=inv_embeddings_cache,
         )
 
         # _match_one_txn returns either a plain Match (exception) or a tuple
@@ -554,6 +562,7 @@ async def run_reconciliation(
                 "explanation": match.explanation_text or "",
             }
             await sse_queue.put(_sse_event(event))
+            await asyncio.sleep(0)  # Yield to event loop so SSE flushes to client/proxy immediately
 
     # ── Hungarian Global Bipartite Optimization ──────────────────────────────
     pending_matches, hungarian_audits = apply_hungarian_to_batch(

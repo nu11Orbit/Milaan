@@ -109,6 +109,35 @@ MAX_EMBEDDING_PTS = 20.0
 PASS3_RESOLVE_THRESHOLD = 70.0
 
 
+def precompute_invoice_embeddings(
+    inv_views: List[InvoiceView],
+    settings=None,
+) -> dict[str, np.ndarray]:
+    """
+    Pre-compute embeddings for all invoices in a batch once.
+    Returns a dict mapping invoice_id -> 1D numpy array embedding.
+    """
+    if settings is None:
+        settings = get_settings()
+
+    if not settings.enable_semantic_embedding or not inv_views:
+        return {}
+
+    try:
+        model = _get_model()
+        inv_texts = [_invoice_text(inv) for inv in inv_views]
+        embeddings = model.encode(
+            inv_texts,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+            batch_size=64,
+        )
+        return {inv.invoice_id: emb for inv, emb in zip(inv_views, embeddings)}
+    except Exception as e:
+        log.warning(f"Precomputing invoice embeddings failed (non-fatal): {e}")
+        return {}
+
+
 # ── Main Pass 3 function ───────────────────────────────────────────────────────
 
 def run_pass3(
@@ -116,6 +145,7 @@ def run_pass3(
     candidates: List[CandidateMatch],
     all_invoices_by_id: dict,  # invoice_id → InvoiceView
     settings=None,
+    invoice_embeddings_cache: Optional[dict[str, np.ndarray]] = None,
 ) -> List[CandidateMatch]:
     """
     Apply semantic embedding similarity to unresolved candidates.
@@ -125,10 +155,11 @@ def run_pass3(
 
     Parameters
     ----------
-    txn               : Bank transaction being matched.
-    candidates        : CandidateMatch list (sorted desc), partially resolved.
-    all_invoices_by_id: {invoice_id: InvoiceView} lookup.
-    settings          : Injected settings.
+    txn                     : Bank transaction being matched.
+    candidates              : CandidateMatch list (sorted desc), partially resolved.
+    all_invoices_by_id      : {invoice_id: InvoiceView} lookup.
+    settings                : Injected settings.
+    invoice_embeddings_cache: Precomputed {invoice_id: embedding} cache for speed.
 
     Returns
     -------
@@ -157,32 +188,43 @@ def run_pass3(
         all_invoices_by_id.get(cm.invoice_id) for cm in unresolved
     ]
 
-    # Build text strings for batch encoding
-    txn_text_str   = _txn_text(txn)
-    inv_text_strs  = [
-        _invoice_text(inv) if inv else ""
-        for inv in inv_views
-    ]
-
-    all_texts = [txn_text_str] + inv_text_strs
-
     try:
         model = _get_model()
-        embeddings = model.encode(
-            all_texts,
-            convert_to_numpy=True,
-            show_progress_bar=False,
-            batch_size=32,
-        )
+        if invoice_embeddings_cache is not None:
+            # Fast-path: encode ONLY the single txn string
+            txn_emb = model.encode(
+                _txn_text(txn),
+                convert_to_numpy=True,
+                show_progress_bar=False,
+            )
+            inv_embs = [
+                invoice_embeddings_cache.get(cm.invoice_id)
+                if cm.invoice_id in invoice_embeddings_cache
+                else (model.encode(_invoice_text(inv), convert_to_numpy=True, show_progress_bar=False) if inv else np.array([]))
+                for cm, inv in zip(unresolved, inv_views)
+            ]
+        else:
+            # Fallback path: build text strings for batch encoding
+            txn_text_str   = _txn_text(txn)
+            inv_text_strs  = [
+                _invoice_text(inv) if inv else ""
+                for inv in inv_views
+            ]
+            all_texts = [txn_text_str] + inv_text_strs
+            embeddings = model.encode(
+                all_texts,
+                convert_to_numpy=True,
+                show_progress_bar=False,
+                batch_size=32,
+            )
+            txn_emb  = embeddings[0]
+            inv_embs = embeddings[1:]
     except Exception as e:
         log.warning(f"Pass 3 embedding failed for txn {txn.txn_id}: {e}")
         # Non-fatal — candidates simply don't get embedding score
         for cm in unresolved:
             cm.add("pass3_embedding", 0.0, f"Embedding unavailable: {e}", fired=False)
         return candidates
-
-    txn_emb  = embeddings[0]
-    inv_embs = embeddings[1:]
 
     # Assign scores
     scored = []

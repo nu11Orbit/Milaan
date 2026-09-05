@@ -113,6 +113,10 @@ class LLMRouter:
         self._cb_gemini.reset()
         self._cb_groq.reset()
 
+    def are_all_breakers_open(self) -> bool:
+        """Returns True if all configured LLM providers have their circuit breakers open."""
+        return self._cb_gemini.is_open and self._cb_groq.is_open
+
     async def _try_provider(
         self,
         name: str,
@@ -125,10 +129,9 @@ class LLMRouter:
         Attempt provider with retries. Returns (raw_text, result) or None on failure.
         Updates circuit breaker state.
 
-        RateLimitError (HTTP 429/503) breaks the retry loop immediately — there
-        is no point retrying with backoff when the daily/minute quota is fully
-        exhausted.  The circuit breaker is still incremented so persistent
-        quota problems open the breaker after N consecutive failures.
+        RateLimitError (HTTP 429/503) breaks the retry loop and trips the breaker
+        immediately — there is no point retrying with backoff or hitting the same
+        provider repeatedly when daily/minute quota is exhausted.
         """
         if circuit.is_open:
             log.info(f"Skipping {name} — circuit breaker is open")
@@ -146,12 +149,14 @@ class LLMRouter:
                 return raw_text, result
 
             except RateLimitError as e:
-                # 429 / quota exhausted — skip retries immediately
+                # 429 / quota exhausted — trip circuit breaker immediately for the rest of the batch
                 circuit.record_failure()
+                circuit._open = True
+                circuit.consecutive_fails = circuit.threshold
                 elapsed = time.monotonic() - t0
                 log.warning(
                     f"{name} rate-limited (attempt {attempt+1}) in {elapsed:.2f}s: {e}. "
-                    "Skipping retries — quota will not reset within the backoff window."
+                    "Circuit breaker tripped OPEN immediately for remaining batch records."
                 )
                 break   # ← exit retry loop, return None, try next provider
 

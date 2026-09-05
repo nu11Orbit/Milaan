@@ -203,6 +203,7 @@ def should_run_pass5(
     requires_human_review: bool = False,
     flagged_for_llm:       bool = False,
     settings=None,
+    router=None,
 ) -> bool:
     """
     Return True only if Pass 5 is warranted.
@@ -211,7 +212,11 @@ def should_run_pass5(
     • Already auto_accept band AND no flags → save cost + latency
     • Hard-floor rejects (score < 30) → no LLM can save these
     • Exception records → already going to exception queue
+    • Both circuit breakers open (quota exhausted) → fast skip
     """
+    if router is not None and hasattr(router, "are_all_breakers_open") and router.are_all_breakers_open():
+        return False
+
     from app.core.config import get_settings
     from app.engine.confidence_scorer import HARD_FLOOR_REJECT
     if settings is None:
