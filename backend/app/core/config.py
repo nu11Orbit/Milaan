@@ -77,7 +77,6 @@ class Settings(BaseSettings):
     cors_origins: list[str] = [
         "http://localhost:3000",
         "https://milaan-seven.vercel.app",
-        "https://*.vercel.app",
     ]
 
     @field_validator("cors_origins", mode="before")
